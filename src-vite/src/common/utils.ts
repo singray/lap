@@ -530,7 +530,13 @@ export function getPreviewUrl(
   return query ? `${base}?${query}` : base;
 }
 
-export function shouldUseBackendPreview(filePath = '', fileType = 0): boolean {
+// Ordinary raster images whose full decode is heavy for the webview are shown
+// through a downscaled backend preview. Keep in sync with
+// `is_large_regular_image_path` in src-tauri/src/t_image.rs.
+export const LARGE_IMAGE_PREVIEW_THRESHOLD = 24_000_000;
+export const LARGE_IMAGE_PREVIEW_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp'];
+
+export function shouldUseBackendPreview(filePath = '', fileType = 0, width = 0, height = 0): boolean {
   if (!filePath) return false;
   if (Number(fileType) === 3) return true;
 
@@ -538,11 +544,25 @@ export function shouldUseBackendPreview(filePath = '', fileType = 0): boolean {
   if (isLinux && extension === 'avif') {
     return true;
   }
-  return [
+  if ([
     'tif', 'tiff', 'jxl', 'heic', 'heif', 'hif',
     'exr', 'hdr', 'rgbe', 'psd', 'jp2', 'j2k', 'j2c', 'jpc', 'jpf', 'jpx',
     'dpx', 'dds', 'tga', 'qoi', 'fits', 'fit', 'fts'
-  ].includes(extension);
+  ].includes(extension)) {
+    return true;
+  }
+  if (LARGE_IMAGE_PREVIEW_EXTENSIONS.includes(extension) && width > 0 && height > 0) {
+    return width * height > LARGE_IMAGE_PREVIEW_THRESHOLD;
+  }
+  return false;
+}
+
+// Whether a file shown through the large-image preview should swap in the
+// original bytes when the user zooms past the preview's native resolution.
+export function isLargePreviewUpgradeCandidate(filePath = '', width = 0, height = 0): boolean {
+  if (!filePath || width <= 0 || height <= 0) return false;
+  const extension = getFileExtension(filePath).toLowerCase();
+  return LARGE_IMAGE_PREVIEW_EXTENSIONS.includes(extension) && width * height > LARGE_IMAGE_PREVIEW_THRESHOLD;
 }
 
 export function getThumbnailDataUrl(

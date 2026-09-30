@@ -1242,6 +1242,31 @@ fn should_generate_preview_for_file(file_path: &str, file_type: i64) -> bool {
         || is_avif_path(file_path)
 }
 
+/// Ordinary raster images (JPEG/PNG/WebP) are decoded by the webview itself,
+/// where a bitmap of tens of megapixels stalls opening and zooming. Such files
+/// get a downscaled preview from the backend instead; the viewer swaps in the
+/// original bytes only when zoomed past the preview's native resolution.
+/// Keep in sync with LARGE_IMAGE_PREVIEW_* in src-vite/src/common/utils.ts.
+const LARGE_IMAGE_PREVIEW_MAX_PIXELS: u64 = 24_000_000;
+
+fn is_large_regular_image_path(file_path: &str) -> bool {
+    let extension = Path::new(file_path)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase())
+        .unwrap_or_default();
+    if !matches!(extension.as_str(), "jpg" | "jpeg" | "png" | "webp") {
+        return false;
+    }
+    if crate::t_utils::get_file_type(file_path) != Some(1) {
+        return false;
+    }
+    matches!(
+        get_image_dimensions(file_path),
+        Ok((width, height)) if (width as u64) * (height as u64) > LARGE_IMAGE_PREVIEW_MAX_PIXELS
+    )
+}
+
 async fn get_generated_preview_bytes(file_path: &str) -> Result<Option<Vec<u8>>, String> {
     let file_type = t_utils::get_file_type(file_path).unwrap_or(0);
 
@@ -1741,7 +1766,9 @@ pub async fn get_file_image_bytes_cached(
     prefer_embedded_raw_preview: bool,
 ) -> Result<Vec<u8>, String> {
     let file_type = t_utils::get_file_type(file_path).unwrap_or(0);
-    let cache_signature = if should_generate_preview_for_file(file_path, file_type) {
+    let generate_preview = should_generate_preview_for_file(file_path, file_type)
+        || is_large_regular_image_path(file_path);
+    let cache_signature = if generate_preview {
         Some(get_file_signature(file_path)?)
     } else {
         None
@@ -1783,6 +1810,9 @@ pub async fn get_file_image_bytes_cached(
                 .await
                 .map_err(|e| format!("Failed to read the image: {}", e))?,
         }
+    } else if is_large_regular_image_path(file_path) {
+        get_image_thumbnail(file_path, get_image_orientation(file_path), 4096)?
+            .ok_or_else(|| format!("Failed to generate preview for large image: {}", file_path))?
     } else {
         tokio::fs::read(file_path)
             .await

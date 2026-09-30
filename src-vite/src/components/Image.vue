@@ -182,6 +182,8 @@ import {
   getAssetSrc,
   getPreviewUrl,
   shouldUseBackendPreview,
+  isLargePreviewUpgradeCandidate,
+  LARGE_IMAGE_PREVIEW_EXTENSIONS,
   getFileExtension,
   getThumbUrl,
   getThumbnailDataUrl,
@@ -414,7 +416,7 @@ function waitForNextPaint() {
 
 // inline loading for formats that require backend preview decoding
 const showInlineLoading = computed(() =>
-  props.showInlineLoading || (shouldUseBackendPreview(props.filePath, Number(props.fileType || 0)) && !!displayThumbnailSrc.value)
+  props.showInlineLoading || (shouldUseBackendPreview(props.filePath, Number(props.fileType || 0), props.imageWidth, props.imageHeight) && !!displayThumbnailSrc.value)
 );
 
 async function getEffectiveThumbnailSrc() {
@@ -540,7 +542,7 @@ function loadImageResource(filePath?: string) {
       reject(new Error(`Error loading image: ${filePath}`));
     };
 
-    if (shouldUseBackendPreview(filePath, Number(props.fileType || 0))) {
+    if (shouldUseBackendPreview(filePath, Number(props.fileType || 0), props.imageWidth, props.imageHeight)) {
       src = getPreviewUrl(
         props.fileId,
         filePath,
@@ -580,6 +582,12 @@ function loadImageResource(filePath?: string) {
 
 function warmImage(filePath?: string) {
   if (!filePath || filePath === props.filePath || shouldUseBackendPreview(filePath, Number(props.fileType || 0))) {
+    return;
+  }
+  // Without the next file's dimensions we cannot request its preview, and
+  // warming its original bytes could decode tens of megapixels in the
+  // background, so skip large-image extensions entirely.
+  if (LARGE_IMAGE_PREVIEW_EXTENSIONS.includes(getFileExtension(filePath).toLowerCase())) {
     return;
   }
 
@@ -1223,6 +1231,78 @@ const updatePosition = () => {
   }
 };
 
+// Zoom-triggered upgrade: files shown through the large-image backend preview
+// swap in their original bytes once the user zooms past the preview's native
+// resolution (scale > 1), so fit-view and moderate zoom never pay for a full
+// decode of a tens-of-megapixels image.
+const fullImageUpgraded = ref(false);
+const fullImageUpgradeInFlight = ref(false);
+
+async function maybeUpgradePreviewToFullImage() {
+  if (fullImageUpgraded.value || fullImageUpgradeInFlight.value) return;
+  const index = activeImage.value;
+  const filePath = props.filePath;
+  if (!filePath || imageFilePath.value[index] !== filePath) return;
+  if ((scale.value[index] ?? 1) <= 1) return;
+  if (!isLargePreviewUpgradeCandidate(filePath, props.imageWidth, props.imageHeight)) return;
+  const previewSrc = getPreviewUrl(
+    props.fileId,
+    filePath,
+    false,
+    props.fileVersion,
+    config.settings.rawThumbnailSource,
+  );
+  if (!previewSrc || imageSrc.value[index] !== previewSrc) return;
+
+  fullImageUpgradeInFlight.value = true;
+  const loadingId = currentLoadingId.value;
+  try {
+    const src = getAssetSrc(filePath, props.fileVersion);
+    const img = new Image();
+    img.decoding = 'async';
+    await new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = () => reject(new Error('Failed to load full image'));
+      img.src = src;
+    });
+    await img.decode().catch(() => {});
+    if (
+      loadingId !== currentLoadingId.value
+      || props.filePath !== filePath
+      || activeImage.value !== index
+      || imageSrc.value[index] !== previewSrc
+    ) {
+      return;
+    }
+    // Keep the layout box so the current transform (scale/position) stays
+    // valid; only the source pixels become sharper.
+    const layout = getCompatibleLayout(
+      img.naturalWidth,
+      img.naturalHeight,
+      imageSize.value[index].width,
+      imageSize.value[index].height,
+    );
+    noTransition.value = true;
+    setImageSlot(index, filePath, src, img.naturalWidth, img.naturalHeight, layout.width, layout.height);
+    clampPosition(true);
+    fullImageUpgraded.value = true;
+    setTimeout(() => {
+      noTransition.value = false;
+    }, 150);
+  } catch {
+    // Keep showing the preview; the next zoom change will retry.
+  } finally {
+    fullImageUpgradeInFlight.value = false;
+  }
+}
+
+watch(
+  [() => scale.value[activeImage.value], activeImage, () => imageSrc.value[activeImage.value]],
+  () => {
+    void maybeUpgradePreviewToFullImage();
+  },
+);
+
 // Watch file changes and the selected RAW preview source.
 watch([
   () => props.filePath,
@@ -1248,6 +1328,8 @@ watch([
   }
 
   loadError.value = false; // Reset error state
+  fullImageUpgraded.value = false;
+  fullImageUpgradeInFlight.value = false;
 
   if (!newFilePath) {
     isLoading.value = false;
@@ -1259,7 +1341,7 @@ watch([
     isLoading.value = true;
   }, 500);
 
-  const usesBackendPreview = shouldUseBackendPreview(newFilePath, Number(props.fileType || 0));
+  const usesBackendPreview = shouldUseBackendPreview(newFilePath, Number(props.fileType || 0), props.imageWidth, props.imageHeight);
   const ffmpegExtensionsPromise = getFfmpegBackedPreviewExtensions();
   const isRawPreview = Number(props.fileType || 0) === 3;
 
@@ -1394,14 +1476,14 @@ watch(displayThumbnailSrc, async (newThumbSrc) => {
   if (!currentFilePath) return;
   const loadingId = currentLoadingId.value;
 
-  const usesBackendPreview = shouldUseBackendPreview(currentFilePath, Number(props.fileType || 0));
+  const usesBackendPreview = shouldUseBackendPreview(currentFilePath, Number(props.fileType || 0), props.imageWidth, props.imageHeight);
   const ffmpegExtensions = await getFfmpegBackedPreviewExtensions();
   if (!usesBackendPreview || ffmpegExtensions.has(getFileExtension(currentFilePath).toLowerCase())) return;
 
   // Only update if we are still waiting for the full image OR if we are currently showing a stale placeholder
   const activeIndex = activeImage.value;
-  
-  // We check if it's the full original image by checking the src. 
+
+  // We check if it's the full original image by checking the src.
   // For backend preview, the full image src is from getPreviewUrl.
   const fullImageSrc = getPreviewUrl(
     props.fileId,
@@ -1410,7 +1492,10 @@ watch(displayThumbnailSrc, async (newThumbSrc) => {
     props.fileVersion,
     config.settings.rawThumbnailSource,
   );
-  const isCurrentlyShowingFullImage = imageSrc.value[activeIndex] === fullImageSrc;
+  const isCurrentlyShowingFullImage = imageSrc.value[activeIndex] === fullImageSrc
+    // Once the zoom upgrade swapped in the original bytes, never downgrade
+    // back to the preview.
+    || fullImageUpgraded.value;
   
   if (isCurrentlyShowingFullImage) return;
 
