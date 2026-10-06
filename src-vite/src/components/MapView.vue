@@ -24,8 +24,8 @@
         @click="zoomCenter"
       />
       <TButton
-        :icon="config.infoPanel.mapTheme === 0 ? IconMapDefault : IconMapSatellite"
-        :tooltip="t(config.infoPanel.mapTheme === 0 ? 'map.standard' : 'map.satellite')"
+        :icon="config.infoPanel.mapTheme === 1 ? IconMapSatellite : IconMapDefault"
+        :tooltip="t(config.infoPanel.mapTheme === 2 ? 'map.gaode' : config.infoPanel.mapTheme === 1 ? 'map.satellite' : 'map.standard')"
         @click="toggleMap"
       />
       <TButton
@@ -43,7 +43,7 @@ import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { config } from '@/common/config'
 import { openExternalUrl } from '@/common/api'
-import { createTileLayerGroup, getGlobalMapTheme, getMapTheme } from '@/common/mapProviders'
+import { createTileLayerGroup, cycleGlobalThemeIndex, getGlobalMapTheme, getMapTheme, nextGlobalFallbackThemeIndex } from '@/common/mapProviders'
 import { isMac } from '@/common/utils'
 import { useUIStore } from '@/stores/uiStore'
 
@@ -88,6 +88,7 @@ let marker = null
 let map = null
 let layer = null
 let tileErrorFallbackTriggered = false
+let displayedThemeIndex = 0
 let zoom = ref(props.zoom)
 let activeMaxZoom = ref(19)
 let resizeObserver = null
@@ -187,11 +188,12 @@ function zoomCenter() {
 }
 
 function toggleMap() {
-  config.infoPanel.mapTheme = config.infoPanel.mapTheme === 0 ? 1 : 0;
+  config.infoPanel.mapTheme = cycleGlobalThemeIndex(config.infoPanel.mapTheme);
   updateTheme();
 }
 
 function updateTheme() {
+  displayedThemeIndex = config.settings.mapProvider === 'tianditu' ? 0 : Number(config.infoPanel.mapTheme) || 0;
   const theme = getMapTheme(config.settings.mapProvider, config.settings.tiandituToken, config.infoPanel.mapTheme)
   applyTheme(theme, false)
 }
@@ -211,10 +213,13 @@ function applyTheme(theme, isFallback) {
   created.tileLayers.forEach(tileLayer => {
     tileLayer.on('tileerror', () => {
       // Requests from a removed layer can still fail after a provider switch.
-      // Ignore them so an old OSM request cannot replace the new provider.
+      // Ignore them so an old tile source cannot replace the new provider.
       if (layer !== activeLayer || tileErrorFallbackTriggered || isFallback) return
+      const nextIndex = nextGlobalFallbackThemeIndex(displayedThemeIndex)
+      if (nextIndex < 0 || nextIndex === displayedThemeIndex) return
       tileErrorFallbackTriggered = true
-      applyTheme(getGlobalMapTheme(config.infoPanel.mapTheme), true)
+      displayedThemeIndex = nextIndex
+      applyTheme(getGlobalMapTheme(nextIndex), true)
     })
   })
 }

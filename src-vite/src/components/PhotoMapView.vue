@@ -13,8 +13,8 @@
       <TButton :icon="IconZoomIn" :tooltip="t('map.zoom_in')" :disabled="zoom >= activeMaxZoom" @click="zoomIn" />
       <TButton :icon="IconMapCenter" :tooltip="t('map.zoom_center')" @click="isQueryMap ? fitBounds() : zoomCenter()" />
       <TButton
-        :icon="config.infoPanel.mapTheme === 0 ? IconMapDefault : IconMapSatellite"
-        :tooltip="t(config.infoPanel.mapTheme === 0 ? 'map.standard' : 'map.satellite')"
+        :icon="config.infoPanel.mapTheme === 1 ? IconMapSatellite : IconMapDefault"
+        :tooltip="t(config.infoPanel.mapTheme === 2 ? 'map.gaode' : config.infoPanel.mapTheme === 1 ? 'map.satellite' : 'map.standard')"
         @click="toggleMap"
       />
       <TButton v-if="showAppleMapsButton" :icon="IconExternal" :tooltip="t('file_info.open_apple_maps')" @click="openAppleMaps" />
@@ -32,7 +32,7 @@ import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 
 import { config } from '@/common/config'
-import { createTileLayerGroup, getGlobalMapTheme, getMapTheme } from '@/common/mapProviders'
+import { createTileLayerGroup, cycleGlobalThemeIndex, getGlobalMapTheme, getMapTheme, nextGlobalFallbackThemeIndex } from '@/common/mapProviders'
 import {
   getCollectionQueryFileIds,
   getFilesByIds,
@@ -83,6 +83,7 @@ let markerLayer = null
 let tileLayer = null
 let resizeObserver = null
 let tileErrorFallbackTriggered = false
+let displayedThemeIndex = 0
 let pointRequestToken = 0
 let detailRequestToken = 0
 let detailTimer = null
@@ -466,6 +467,7 @@ function addPhotoMarker(lat, lon, fileId, count, cluster = null) {
 }
 
 function updateTheme() {
+  displayedThemeIndex = config.settings.mapProvider === 'tianditu' ? 0 : Number(config.infoPanel.mapTheme) || 0
   const theme = getMapTheme(config.settings.mapProvider, config.settings.tiandituToken, config.infoPanel.mapTheme)
   applyTheme(theme, false)
 }
@@ -484,10 +486,13 @@ function applyTheme(theme, isFallback) {
   created.tileLayers.forEach(layer => {
     layer.on('tileerror', () => {
       // Requests from a removed layer can still fail after a provider switch.
-      // Ignore them so an old OSM request cannot replace the new provider.
+      // Ignore them so an old tile source cannot replace the new provider.
       if (tileLayer !== activeLayer || tileErrorFallbackTriggered || isFallback) return
+      const nextIndex = nextGlobalFallbackThemeIndex(displayedThemeIndex)
+      if (nextIndex < 0 || nextIndex === displayedThemeIndex) return
       tileErrorFallbackTriggered = true
-      applyTheme(getGlobalMapTheme(config.infoPanel.mapTheme), true)
+      displayedThemeIndex = nextIndex
+      applyTheme(getGlobalMapTheme(nextIndex), true)
     })
   })
 }
@@ -508,7 +513,7 @@ function zoomCenter() {
   zoom.value = 13
   updateFromCoords()
 }
-function toggleMap() { config.infoPanel.mapTheme = config.infoPanel.mapTheme === 0 ? 1 : 0 }
+function toggleMap() { config.infoPanel.mapTheme = cycleGlobalThemeIndex(config.infoPanel.mapTheme) }
 function validLatLon(lat, lon) { return lat != null && lon != null && lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180 }
 async function openAppleMaps() {
   if (!showAppleMapsButton.value) return
