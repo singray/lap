@@ -1,19 +1,7 @@
 const GLOBAL_THEMES = [
   {
-    maxZoom: 19,
-    layers: [
-      { url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', attribution: 'OpenStreetMap' },
-    ],
-  },
-  {
-    maxZoom: 17,
-    layers: [
-      { url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', attribution: 'Powered by Esri' },
-    ],
-  },
-  {
-    // Reachable without a proxy from China, so it serves as the automatic
-    // fallback when OSM tiles fail to load.
+    // Default source: reachable from China without a proxy, with Chinese
+    // labels.
     maxZoom: 18,
     layers: [
       {
@@ -23,9 +11,23 @@ const GLOBAL_THEMES = [
       },
     ],
   },
+  {
+    maxZoom: 17,
+    layers: [
+      { url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', attribution: 'Powered by Esri' },
+    ],
+  },
+  {
+    // Needs a proxy from China; kept as a manual choice and as the fallback
+    // source when Gaode tiles fail.
+    maxZoom: 19,
+    layers: [
+      { url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', attribution: 'OpenStreetMap' },
+    ],
+  },
 ];
 
-// UI toggle and tile-error fallback both walk OSM -> Gaode -> ArcGIS.
+// UI toggle and tile-error fallback both walk Gaode -> OSM -> ArcGIS.
 const GLOBAL_THEME_CYCLE = [0, 2, 1];
 
 export function cycleGlobalThemeIndex(themeIndex) {

@@ -46,7 +46,7 @@ export const useConfigStore = defineStore('configStore', {
       showBasicInfo: true,       // show basic info
       showMetadata: true,        // show metadata
       showMap: true,             // show map
-      mapTheme: 0,               // 0: standard, 2: satellite
+      mapTheme: 0,               // 0: gaode (default), 1: satellite, 2: osm standard
     },
 
     search: {

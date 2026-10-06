@@ -25,7 +25,7 @@
       />
       <TButton
         :icon="config.infoPanel.mapTheme === 1 ? IconMapSatellite : IconMapDefault"
-        :tooltip="t(config.infoPanel.mapTheme === 2 ? 'map.gaode' : config.infoPanel.mapTheme === 1 ? 'map.satellite' : 'map.standard')"
+        :tooltip="t(config.infoPanel.mapTheme === 0 ? 'map.gaode' : config.infoPanel.mapTheme === 2 ? 'map.standard' : 'map.satellite')"
         @click="toggleMap"
       />
       <TButton

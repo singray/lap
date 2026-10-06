@@ -14,7 +14,7 @@
       <TButton :icon="IconMapCenter" :tooltip="t('map.zoom_center')" @click="isQueryMap ? fitBounds() : zoomCenter()" />
       <TButton
         :icon="config.infoPanel.mapTheme === 1 ? IconMapSatellite : IconMapDefault"
-        :tooltip="t(config.infoPanel.mapTheme === 2 ? 'map.gaode' : config.infoPanel.mapTheme === 1 ? 'map.satellite' : 'map.standard')"
+        :tooltip="t(config.infoPanel.mapTheme === 0 ? 'map.gaode' : config.infoPanel.mapTheme === 2 ? 'map.standard' : 'map.satellite')"
         @click="toggleMap"
       />
       <TButton v-if="showAppleMapsButton" :icon="IconExternal" :tooltip="t('file_info.open_apple_maps')" @click="openAppleMaps" />
