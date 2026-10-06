@@ -441,11 +441,11 @@ fn get_app_data_folder_name() -> String {
         .cloned()
         .unwrap_or_else(|| "com.julyx10.lap".to_string());
 
-    if cfg!(debug_assertions) {
-        format!("{}.debug", identifier)
-    } else {
-        identifier
-    }
+    // Fork change: upstream isolates debug builds into a `{identifier}.debug`
+    // directory, which makes the dev build start with an empty library every
+    // rebuild. Share the release data directory instead so albums stay visible
+    // across builds — do not run two builds against it at the same time.
+    identifier
 }
 
 /// Get the cache directory for app-managed temporary data.
