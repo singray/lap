@@ -1,7 +1,7 @@
 [package]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 name = "Lap"
-version = "0.3.2"
+version = "0.4.0"
 description = "An offline-first photo manager for large local libraries."
 homepage = "https://julyx10.github.io/lap"
 repository = "https://github.com/julyx10/lap"
@@ -26,6 +26,7 @@ strip = true
 opt-level = 3
 
 [dependencies]
+drag = { path = "vendor/drag" }
 tauri = { version = "2", features = [
     "macos-private-api",
     "protocol-asset",
@@ -40,6 +41,9 @@ tauri-plugin-updater = "2.10.0"
 tauri-plugin-aptabase = "1.0.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+quick-xml = "0.37.5"
+plist = "1.8.0"
+memmap2 = "0.9"
 rusqlite = { version = "0.32.1", features = ["bundled", "collation"] }
 chrono = "0.4"
 rstar = "0.12"
@@ -54,6 +58,7 @@ image = "0.25.10"
 png = "0.18.1"
 kamadak-exif = "0.6.1"
 little_exif = "0.6.23"
+exiftool-rs = { version = "=1.0.0", default-features = false }
 fast_image_resize = "5.1.0"
 imagesize = "0.13.0"
 tokio = { version = "1.50.0", features = ["full"] }
@@ -78,18 +83,20 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 jxl-oxide = { version = "0.12.5", features = ["image"] }
 libc = "0.2"
 hnsw_rs = "0.3.4"
-
-[target.'cfg(target_os = "linux")'.dependencies]
+tauri-utils = "2"
 percent-encoding = "2.3.1"
+
+[target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
+xattr = "1.6.1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.4"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSScreen", "NSWorkspace"] }
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSDictionary", "NSError", "NSString", "NSURL"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSDictionary", "NSError", "NSLocale", "NSString", "NSURL"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 clipboard-win = "5.4.1"
-windows = { version = "0.61.3", default-features = false, features = ["Win32_Foundation", "Win32_System_Com", "Win32_UI_Shell"] }
+windows = { version = "0.61.3", default-features = false, features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_Globalization", "Win32_System_Com", "Win32_UI_Shell"] }
 
 [features]
 # This feature is used for production builds or when a dev server is not specified, DO NOT REMOVE!!

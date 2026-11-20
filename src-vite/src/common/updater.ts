@@ -45,11 +45,13 @@ function getErrorMessage(error: unknown, fallback: string) {
 
 interface AppUpdaterOptions {
   toastPlacement?: ToastPlacement;
+  silent?: boolean; // suppress check-result toasts; the caller surfaces the state inline instead
 }
 
 export function useAppUpdater(localeMsg: Ref<any>, options: AppUpdaterOptions = {}) {
   const toast = useToast();
   const toastPlacement = options.toastPlacement ?? 'bottom-right';
+  const silent = options.silent ?? false;
   const updateAvailable = ref(false);
   const isCheckingUpdate = ref(false);
   const isInstallingUpdate = ref(false);
@@ -58,6 +60,7 @@ export function useAppUpdater(localeMsg: Ref<any>, options: AppUpdaterOptions = 
   const isReleaseNoteVisible = ref(false);
   const updateVersion = ref('');
   const downloadPercent = ref<number | null>(null);
+  const checkError = ref('');
   let downloadTotalBytes = 0;
   let downloadedBytes = 0;
   let currentUpdate: Update | null = null;
@@ -164,7 +167,9 @@ export function useAppUpdater(localeMsg: Ref<any>, options: AppUpdaterOptions = 
       downloadTotalBytes = event.data.contentLength || 0;
       downloadedBytes = 0;
       downloadPercent.value = downloadTotalBytes > 0 ? 0 : null;
-      toast.info(localeMsg.value.settings.about.auto_update.downloading_started, { placement: toastPlacement });
+      if (!silent) {
+        toast.info(localeMsg.value.settings.about.auto_update.downloading_started, { placement: toastPlacement });
+      }
       return;
     }
 
@@ -179,7 +184,9 @@ export function useAppUpdater(localeMsg: Ref<any>, options: AppUpdaterOptions = 
     if (event.event === 'Finished') {
       isDownloadingUpdate.value = false;
       downloadPercent.value = 100;
-      toast.success(localeMsg.value.settings.about.auto_update.download_finished, { placement: toastPlacement });
+      if (!silent) {
+        toast.success(localeMsg.value.settings.about.auto_update.download_finished, { placement: toastPlacement });
+      }
     }
   }
 
@@ -194,6 +201,7 @@ export function useAppUpdater(localeMsg: Ref<any>, options: AppUpdaterOptions = 
     }
 
     isCheckingUpdate.value = true;
+    checkError.value = '';
     resetPendingUpdateState();
     resetDownloadProgress();
 
@@ -201,7 +209,7 @@ export function useAppUpdater(localeMsg: Ref<any>, options: AppUpdaterOptions = 
       const update = await checkWithTimeout();
       localStorage.setItem(UPDATE_CHECK_KEY, String(Date.now()));
       if (!update) {
-        if (manual) {
+        if (manual && !silent) {
           toast.info(localeMsg.value.settings.about.auto_update.latest_version, { placement: toastPlacement });
         }
         return;
@@ -210,14 +218,17 @@ export function useAppUpdater(localeMsg: Ref<any>, options: AppUpdaterOptions = 
       updateAvailable.value = true;
       updateVersion.value = update.version;
       currentUpdate = update;
-      toast.info(
-        localeMsg.value.settings.about.auto_update.new_version_available.replace('{version}', update.version),
-        { placement: toastPlacement }
-      );
+      if (!silent) {
+        toast.info(
+          localeMsg.value.settings.about.auto_update.new_version_available.replace('{version}', update.version),
+          { placement: toastPlacement }
+        );
+      }
     } catch (error: unknown) {
       const message = getErrorMessage(error, localeMsg.value.settings.about.auto_update.failed_check);
       console.error('Failed to check for updates:', error);
-      if (manual) {
+      checkError.value = message;
+      if (manual && !silent) {
         toast.error(message, { placement: toastPlacement });
       }
     } finally {
@@ -244,7 +255,9 @@ export function useAppUpdater(localeMsg: Ref<any>, options: AppUpdaterOptions = 
     try {
       isInstallingUpdate.value = true;
       resetDownloadProgress();
-      toast.info(localeMsg.value.settings.about.auto_update.downloading_update, { placement: toastPlacement });
+      if (!silent) {
+        toast.info(localeMsg.value.settings.about.auto_update.downloading_update, { placement: toastPlacement });
+      }
       await currentUpdate.downloadAndInstall(handleDownloadEvent);
       markUpdateReadyToRestart();
       toast.success(localeMsg.value.settings.about.auto_update.update_installed_waiting_restart, { placement: toastPlacement });
@@ -285,6 +298,7 @@ export function useAppUpdater(localeMsg: Ref<any>, options: AppUpdaterOptions = 
     updateVersion,
     isDownloadingUpdate,
     downloadPercent,
+    checkError,
     updateButtonTooltip,
     updateButtonText,
     downloadProgressLabel,

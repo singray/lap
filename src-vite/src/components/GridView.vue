@@ -55,14 +55,14 @@
                 @change="(event) => $emit('group-select-toggled', item, (event.target as HTMLInputElement).checked)"
               />
             </div>
-            <component :is="getGroupIcon(item)" class="w-4 h-4 shrink-0 text-base-content/30" />
+            <component :is="getGroupIcon(item)" class="w-4 h-4 shrink-0 text-base-content/70" />
             <Breadcrumb
               v-if="isFolderPathGroup()"
               :items="getFolderGroupBreadcrumbItems(item)"
               disabled
               class="min-w-0 flex-1 overflow-hidden"
             />
-            <span v-else class="min-w-0 truncate text-sm text-base-content/30">{{ item.label }}</span>
+            <span v-else class="min-w-0 truncate text-sm text-base-content/70">{{ item.label }}</span>
           </div>
           <span class="ml-auto badge badge-xs shrink-0 text-xs text-base-content/30">
             {{ item.countLabel || Number(item.count || 0).toLocaleString() }}
@@ -90,8 +90,8 @@
           @dblclicked="(modifiers) => $emit('item-dblclicked', getFileIndex(item, index), modifiers)"
           @select-toggled="(shiftKey) => $emit('item-select-toggled', getFileIndex(item, index), shiftKey)"
           @action="(actionName) => $emit('item-action', { action: actionName, index: getFileIndex(item, index) })"
+          @selection-context-menu="(event) => $emit('selection-context-menu', getFileIndex(item, index), event)"
         />
-        <div v-else class="w-full h-full bg-base-200/70"></div>
       </div>
     </VirtualScroll>
     <!-- Empty State / Loading -->
@@ -117,14 +117,14 @@
 
 <script setup lang="ts">
 
-import { watch, ref, onMounted, onBeforeUnmount, computed, nextTick } from 'vue';
+import { watch, ref, onMounted, onBeforeUnmount, computed, nextTick, toRaw } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useUIStore } from '@/stores/uiStore';
 import { config } from '@/common/config';
 import { thumbnailProfile } from '@/common/thumbnailProfiles';
 import Thumbnail from '@/components/Thumbnail.vue';
 import VirtualScroll from '@/components/VirtualScroll.vue';
-import { GROUP } from '@/common/constants';
+import { GROUP, GROUP_HEADER_HEIGHT } from '@/common/constants';
 import { calculateJustifiedLayout, calculateLinearRowLayout, calculateLinearColumnLayout, calculateMasonryLayout, type Geometry } from '@/common/layout';
 import { buildFolderBreadcrumbs, formatFolderBreadcrumb, isWithinRootPath } from '@/common/utils';
 import Breadcrumb from '@/components/Breadcrumb.vue';
@@ -164,6 +164,7 @@ const props = withDefaults(defineProps<{
   dedupStatuses?: Record<number, 'keep' | 'dup'>;
   draggedFileIds?: Set<number>;
   gridSize: number;
+  selectionScrollSuppressed?: boolean;
 }>(), {
   selectedItemIndex: -1,
   timelineData: () => [],
@@ -181,6 +182,7 @@ const props = withDefaults(defineProps<{
   dedupStatuses: () => ({}),
   draggedFileIds: () => new Set<number>(),
   gridSize: 120,
+  selectionScrollSuppressed: false,
 });
 
 const emit = defineEmits([
@@ -188,6 +190,7 @@ const emit = defineEmits([
   'item-dblclicked',
   'item-select-toggled',
   'item-action',
+  'selection-context-menu',
   'date-group-select',
   'group-select-toggled',
   'request-scroll',
@@ -207,7 +210,7 @@ const containerRef = ref<HTMLElement | null>(null);
 const scroller = ref<any>(null);
 const columnCount = ref(4);
 const containerWidth = ref(0);
-const GROUP_HEADER_HEIGHT = 40;
+
 const groupHeaderHeight = computed(() => GROUP_HEADER_HEIGHT * Number(config.settings.scale || 1));
 let pendingPointerDrag: {
   pointerId: number;
@@ -274,6 +277,13 @@ function onDocumentPointerMove(event: PointerEvent) {
   emit('item-drag', event);
 }
 
+function cancelPointerDrag() {
+  pendingPointerDrag = null;
+  document.documentElement.style.userSelect = '';
+  document.documentElement.style.webkitUserSelect = '';
+  clearPointerDragListeners();
+}
+
 function onDocumentPointerUp(event: PointerEvent) {
   const drag = pendingPointerDrag;
   if (!drag || event.pointerId !== drag.pointerId) return;
@@ -298,10 +308,19 @@ const hasGroupRows = computed(() =>
   !isFilmstripView.value &&
   (Number(props.groupBy || 0) > 0 || isGroupRow(renderItems.value[0]))
 );
+
+function getLayoutItems(): any[] {
+  const items = renderItems.value;
+  void props.layoutVersion;
+  // Creating the iterator tracks item replacements without reading the array.
+  void items[Symbol.iterator]();
+  return toRaw(items);
+}
+
 const fileIndexToRowIndex = computed(() => {
   const map = new Map<number, number>();
   if (!hasGroupRows.value) return map;
-  renderItems.value.forEach((item, rowIndex) => {
+  getLayoutItems().forEach((item, rowIndex) => {
     if (!isGroupRow(item)) {
       const fileIndex = getFileIndex(item, rowIndex);
       if (fileIndex >= 0) map.set(fileIndex, rowIndex);
@@ -312,7 +331,7 @@ const fileIndexToRowIndex = computed(() => {
 const rowIndexToFileIndex = computed(() => {
   const map = new Map<number, number>();
   if (!hasGroupRows.value) return map;
-  renderItems.value.forEach((item, rowIndex) => {
+  getLayoutItems().forEach((item, rowIndex) => {
     if (!isGroupRow(item)) {
       const fileIndex = getFileIndex(item, rowIndex);
       if (fileIndex >= 0) map.set(rowIndex, fileIndex);
@@ -328,13 +347,14 @@ const groupedLayoutGeometryResult = computed(() => {
 
   const { style } = config.settings.grid;
   const size = props.gridSize;
-  const boxes: Geometry[] = new Array(renderItems.value.length);
+  const items = getLayoutItems();
+  const boxes: Geometry[] = new Array(items.length);
 
   if (!isGeometryGridStyle(style)) {
     let y = 0;
     let col = 0;
 
-    renderItems.value.forEach((item, rowIndex) => {
+    items.forEach((item, rowIndex) => {
       if (isGroupRow(item)) {
         if (col > 0) {
           y += itemHeight.value;
@@ -382,7 +402,7 @@ const groupedLayoutGeometryResult = computed(() => {
     groupRowIndices = [];
   };
 
-  renderItems.value.forEach((item, rowIndex) => {
+  items.forEach((item, rowIndex) => {
     if (isGroupRow(item)) {
       flushGroup();
       boxes[rowIndex] = { x: 0, y, width: containerWidth.value, height: groupHeaderHeight.value };
@@ -414,19 +434,19 @@ const layoutGeometryResult = computed(() => {
       const isVertical = config.settings.grid.previewPosition >= 2;
       if (isVertical) {
         if (containerWidth.value <= 0) return { boxes: [], contentSize: 0 };
-        const result = calculateLinearColumnLayout(props.fileList, containerWidth.value, 0);
+        const result = calculateLinearColumnLayout(getLayoutItems(), containerWidth.value, 0);
         return { boxes: result.boxes, contentSize: result.containerHeight };
       }
-      const result = calculateLinearRowLayout(props.fileList, size, 0);
+      const result = calculateLinearRowLayout(getLayoutItems(), size, 0);
       return { boxes: result.boxes, contentSize: result.containerWidth };
     }
   } else {
     if (style === 2 && containerWidth.value > 0) {
-      const result = calculateJustifiedLayout(props.fileList, containerWidth.value, size, 0);
+      const result = calculateJustifiedLayout(getLayoutItems(), containerWidth.value, size, 0);
       return { boxes: result.boxes, contentSize: result.containerHeight };
     }
     else if (style === 3 && containerWidth.value > 0) {
-      const result = calculateMasonryLayout(props.fileList, containerWidth.value, size, 0);
+      const result = calculateMasonryLayout(getLayoutItems(), containerWidth.value, size, 0);
       return { boxes: result.boxes, contentSize: result.containerHeight };
     }
   }
@@ -572,7 +592,12 @@ watch(layoutContentHeight, (newHeight) => {
   emit('layout-update', { height: newHeight });
 });
 
+// While a drag-move reconciliation updates the list, the selection moves to
+// the first moved item's slot — which may sit outside the viewport. That focus
+// change must never drag the viewport along (issue #483: keep the scroll
+// position after moving files).
 watch(() => props.selectedItemIndex, (newValue) => {
+  if (props.selectionScrollSuppressed) return;
   if (newValue !== -1) {
     scrollToItem(newValue);
   }
@@ -583,9 +608,6 @@ onMounted(() => {
     resizeObserver = new ResizeObserver(() => {
       // updateColumnCount(); // merged into updateLayout
       updateLayout();
-      if (props.selectedItemIndex !== -1) {
-        scrollToItem(props.selectedItemIndex);
-      }
     });
     resizeObserver.observe(containerRef.value);
     updateLayout();
@@ -981,6 +1003,7 @@ function getFolderGroupLabel(item: any) {
 }
 
 defineExpose({
+  cancelPointerDrag,
   getColumnCount,
   scrollToItem,
   scrollToPosition,

@@ -37,14 +37,14 @@
     "drop_action": "Toevoegen",
     "drop_title_hint": "Loslaten om toe te voegen",
     "empty_drop_hint": "Sleep items naar de collectie hierboven om ze toe te voegen.",
-    "added_toast": "{count} bestand(en) toegevoegd aan collectie",
-    "add_failed_toast": "Kan bestanden niet toevoegen aan {count} collectie(s)",
-    "already_exists_toast": "{count} bestand(en) al in collectie",
+    "added_toast": "{count} item(s) toegevoegd aan collectie",
+    "add_failed_toast": "Kan items niet toevoegen aan {count} collectie(s)",
+    "already_exists_toast": "{count} item(s) al in collectie",
     "clear": "Collectie leegmaken",
     "clear_confirm_title": "Collectie leegmaken",
     "clear_confirm_message": "Alle bestanden uit \"{name}\" halen? De bestanden zelf worden niet verwijderd.",
     "clear_confirm_ok": "Leegmaken",
-    "removed_toast": "{count} bestand(en) uit collectie gehaald"
+    "removed_toast": "{count} item(s) uit collectie gehaald"
   },
   "library": {
     "all_files": "Alle bestanden",
@@ -54,6 +54,12 @@
     "database_corrupted_hint": "Probeer over te schakelen naar een andere bibliotheek."
   },
   "album": {
+    "drop": {
+      "add": "Sleep een map om deze toe te voegen",
+      "separate": "Sleep bestanden en mappen afzonderlijk.",
+      "confirm_folder": "Map selecteren: {name}",
+      "folders_only": "Sleep een map hierheen."
+    },
     "album_list": "Albums",
     "search_folders": "Mappen zoeken",
     "favorite_folders_only": "Alleen favoriete mappen",
@@ -78,14 +84,15 @@
       "name": "Naam",
       "description": "Beschrijving",
       "description_placeholder": "Voer een albumbeschrijving in",
-      "images": "Foto's",
+      "images": "Afbeeldingen",
       "videos": "Video's",
       "section_general": "Algemeen",
       "section_scan": "Scanstatus",
       "scanned_files": "Gescand",
       "indexed_files": "Geïndexeerd",
       "skipped_files": "Overgeslagen",
-      "merged_files": "Samengevoegd",
+      "merged_files": "Gekoppelde bestanden",
+      "merged_files_hint": "Bijbehorende bestanden van RAW-paren en Live Photos, getoond met de hoofdfoto.",
       "failed_files": "Mislukt",
       "files_to_scan": "Te scannen",
       "scanning": "Bezig met scannen",
@@ -102,7 +109,6 @@
       "last_scan_time": "Laatst gescand",
       "tab_general": "Algemeen",
       "file_types": "Bestandstypen uitsluiten",
-      "photos": "Foto's",
       "raw": "RAW",
       "file_types_required": "Laat minstens één bestandstype meedoen.",
       "pixel_filter": "Kleine afbeeldingen uitsluiten",
@@ -141,6 +147,9 @@
       "add_rule": "Regel toevoegen",
       "rules_count": "{count}/{max} regels",
       "remove_rule": "Regel verwijderen",
+      "search_options": "Filteren…",
+      "no_matches": "Geen resultaten",
+      "select_value": "Selecteren…",
       "group": "Groeperen",
       "sort": "Sorteren",
       "order": "Volgorde",
@@ -149,6 +158,7 @@
       "validation_name": "Voer een naam in voor het slimme album.",
       "validation_rule": "Voeg minstens één volledige regel toe.",
       "fields": {
+        "folder_name": "Mapnaam",
         "name": "Bestandsnaam",
         "file_type": "Bestandstype",
         "media_subtype": "Mediasubtype",
@@ -223,11 +233,29 @@
       }
     }
   },
+  "offline": {
+    "badge": "Offline",
+    "download_to_open": "Download deze foto eerst in je cloudopslagapp voordat je hem opent.",
+    "cloud_only": "Alleen online beschikbaar",
+    "cloud_only_pending": "Alleen online beschikbaar — bestandsinformatie onvolledig",
+    "original_unavailable": "Het oorspronkelijke bestand is niet beschikbaar",
+    "requires_original": "Hiervoor is het oorspronkelijke bestand nodig. Sluit het opslagapparaat opnieuw aan om deze actie te gebruiken."
+  },
+  "import_files": {
+    "title": "Bestanden importeren",
+    "media": "Ondersteunde mediabestanden",
+    "progress": "{processed} / {total} bestanden importeren…",
+    "summary": "Geïmporteerd: {imported} · Mislukt: {failed}",
+    "formats_failed": "De ondersteunde bestandsindelingen konden niet worden geladen.",
+    "destination_unavailable": "De doelmap is niet beschikbaar.",
+    "copy_failed": "Dit bestand kon niet worden geïmporteerd."
+  },
   "import_organize": {
+    "title": "Map importeren",
     "section_folders": "Kies map",
     "section_status": "Importstatus",
     "to_import": "Te importeren",
-    "files_progress": "{processed} / {total} bestanden ({size})",
+    "files_progress": "{processed} / {total} items ({size})",
     "source": "Bron",
     "source_placeholder": "Kies een bronmap",
     "destination": "Bestemming",
@@ -235,10 +263,10 @@
     "layout_day": "Per dag — JJJJ/JJJJ-MM-DD",
     "layout_month": "Per maand — JJJJ/JJJJ-MM",
     "layout_year": "Per jaar — JJJJ",
-    "layout_none": "Eén map",
+    "layout_structure": "Mapstructuur behouden",
     "import": "Importeren",
     "preparing": "Import voorbereiden",
-    "importing": "Bestanden importeren",
+    "importing": "Items importeren",
     "complete": "Import voltooid",
     "cancelled": "Import geannuleerd",
     "continue": "Doorgaan",
@@ -261,7 +289,7 @@
   "search": {
     "title": "Zoeken",
     "similar_images": "Verwante foto's",
-    "image_search_placeholder": "Zoek in afbeeldingen, bestandsnamen of opmerkingen",
+    "image_search_placeholder": "Doorzoek je bibliotheek",
     "matches": "Resultaten",
     "unknown_location": "Onbekende locatie",
     "unknown_camera": "Onbekende camera",
@@ -311,11 +339,11 @@
     "folders": "Favoriete mappen"
   },
   "rating": {
+    "mixed": "Gemengd",
     "title": "Beoordelingen",
     "unrated": "Niet beoordeeld",
     "all_rated": "Alle beoordeelde",
     "rated": "Beoordeeld",
-    "mixed": "Gemengd",
     "clear_rating": "Beoordeling wissen",
     "five_stars": "5 sterren",
     "four_stars": "4 sterren",
@@ -330,6 +358,8 @@
     "unreviewed": "Niet bekeken"
   },
   "tag": {
+    "no_selected_tags": "Geen geselecteerde tags",
+    "show_selected_only": "Alleen geselecteerde tags tonen",
     "title": "Tags",
     "delete_tag": "Tag verwijderen",
     "edit_tag": "Tags bewerken",
@@ -338,7 +368,14 @@
     "not_found": "Geen tags gevonden",
     "name_exists": "Er bestaat al een tag met deze naam",
     "name_save_failed": "Kan de tagnaam niet opslaan",
-    "load_failed": "Kan de tagstatus niet laden. Sluit dit venster en probeer het opnieuw."
+    "move_failed": "Tag kon niet worden verplaatst",
+    "delete_failed": "Tag kon niet worden verwijderd",
+    "load_failed": "Kan de tagstatus niet laden. Sluit dit venster en probeer het opnieuw.",
+    "root": "Hoofdniveau",
+    "add_child": "Nieuwe subtag",
+    "invalid_name": "Tagnamen mogen geen , ; of {'|'} bevatten.",
+    "invalid_move": "Een tag kan niet binnen zijn eigen boom worden verplaatst.",
+    "delete_tree": "Deze tag en de onderliggende tags worden verwijderd. Afbeeldingen blijven behouden."
   },
   "subject": {
     "title": "Onderwerpen",
@@ -420,7 +457,9 @@
       "placeholder": "Zoek op bestandsnaam"
     },
     "filter": {
-      "select_mode": "Meervoudige selectie",
+      "favorites_only": "Alleen favorieten",
+      "show_selection_panel": "Selectiepaneel openen",
+      "exit_selection_mode": "Selectiemodus beëindigen",
       "select_count": "{count} geselecteerd",
       "group_type_options": [
         "Geen",
@@ -443,7 +482,8 @@
         "Grootte",
         "Afmetingen",
         "Duur",
-        "Willekeurig"
+        "Willekeurig",
+        "Toegevoegd"
       ],
       "similarity": "Overeenkomst",
       "sort_order_options": [
@@ -452,8 +492,8 @@
       ],
       "file_type_options": [
         "Alle",
-        "Foto's",
-        "RAW-bestanden",
+        "Afbeeldingen",
+        "Alleen RAW",
         "Video's"
       ],
       "file_type_other": "Overig"
@@ -461,9 +501,7 @@
     "tooltip": {
       "restore": "Herstellen",
       "refresh": "Vernieuwen",
-      "show_info": "Info tonen",
-      "hide_info": "Info verbergen",
-      "open_dedup": "Duplicaten en vergelijkbare foto's zoeken",
+      "info": "Info",
       "clear_history": "Zoekgeschiedenis wissen",
       "index_faces": "Gezichten indexeren",
       "sort": "Sorteren",
@@ -483,14 +521,13 @@
       "Aanpassen"
     ],
     "empty_title": "Deze lijst is leeg",
-    "empty_desc": "Voeg bestanden toe of pas het huidige filter aan om hier items te zien.",
-    "select_hint": "Geen bestanden geselecteerd",
+    "empty_desc": "Voeg items toe of pas het huidige filter aan om ze hier te zien.",
+    "select_hint": "Geen items geselecteerd",
     "deselect": "Deselecteren",
-    "select_mode_entered": "Meervoudige selectie staat aan",
-    "selection_load_failed": "Kan niet alle bestanden laden voor de selectie. Probeer het opnieuw.",
+    "selection_load_failed": "Kan niet alle items laden voor de selectie. Probeer het opnieuw.",
     "large_batch": {
       "title": "Bulkbewerking bevestigen",
-      "content": "Deze bewerking verwerkt {count} bestanden en kan even duren. Doorgaan?",
+      "content": "Deze bewerking verwerkt {count} items en kan even duren. Doorgaan?",
       "ok": "Doorgaan"
     },
     "drag_action": {
@@ -498,8 +535,8 @@
       "move": "Verplaatsen"
     },
     "edit_disabled": "Selecteer één foto om te bewerken",
-    "type_image": "Foto",
-    "type_images": "Foto's",
+    "type_image": "Afbeelding",
+    "type_images": "Afbeeldingen",
     "type_video": "Video",
     "type_videos": "Video's",
     "select_title": "Selectie",
@@ -511,38 +548,63 @@
     "more_actions": "Meer acties",
     "tag_all": "Taggen",
     "dedup": {
+      "keep_rules": {
+        "title": "Bewaarregels",
+        "priority_order": "Prioriteitsvolgorde",
+        "folders": "Voorkeursmappen",
+        "subfolders": "Inclusief submappen. Hoger in de lijst krijgt voorrang",
+        "folders_skipped": "Geen ingesteld, overgeslagen",
+        "add_folder": "Map toevoegen",
+        "folder_already_added": "Al toegevoegd",
+        "format": "Voorkeursformaat",
+        "similar_only": "Alleen vergelijkbare afbeeldingen",
+        "raw_first": "RAW eerst",
+        "jpeg_heic_first": "JPEG / HEIC eerst",
+        "size": "Voorkeursgrootte",
+        "largest_dimensions": "Hoogste resolutie",
+        "smallest_dimensions": "Laagste resolutie",
+        "largest_file_size": "Grootste bestandsgrootte",
+        "smallest_file_size": "Kleinste bestandsgrootte",
+        "ignore": "Negeren",
+        "time": "Voorkeursdatum",
+        "created_earliest": "Oudste aanmaakdatum",
+        "created_latest": "Nieuwste aanmaakdatum",
+        "modified_earliest": "Oudste wijzigingsdatum",
+        "modified_latest": "Nieuwste wijzigingsdatum"
+      },
       "title": "Duplicaten",
       "tabs": {
         "exact": "Duplicaten",
-        "similar": "Vergelijkbare foto's"
+        "similar": "Vergelijkbare afbeeldingen"
       },
       "scanning": "Zoeken naar duplicaten...",
       "error_title": "Kan niet naar duplicaten zoeken",
-      "error_desc": "De scan kon niet worden voltooid. Probeer het opnieuw nadat je de bestandslijst hebt bijgewerkt.",
+      "error_desc": "De scan kon niet worden voltooid. Probeer het opnieuw nadat je de bestandslijst hebt bijgewerkt",
       "empty_title": "Geen duplicaten gevonden",
-      "empty_desc": "Voeg meer bestanden toe of pas het huidige filterbereik aan.",
-      "similar_title": "Vergelijkbare foto's komen binnenkort",
-      "similar_desc": "Dit tabblad wordt gebruikt voor visueel vergelijkbare foto's zodra de werkwijze voor exacte duplicaten is uitgebreid.",
+      "empty_desc": "Voeg meer bestanden toe of pas het huidige filterbereik aan",
+      "similar_title": "Vergelijkbare afbeeldingen komen binnenkort",
+      "similar_desc": "Dit tabblad wordt gebruikt voor visueel vergelijkbare afbeeldingen zodra de werkwijze voor exacte duplicaten is uitgebreid",
       "similar": {
-        "description": "Zoek visueel vergelijkbare foto's in de huidige weergave.",
-        "analyze": "{count} foto's analyseren",
-        "large_scan_confirm": "{count} foto's analyseren om visueel vergelijkbare te vinden? Dit kan enkele minuten duren.",
+        "analyze_images": "Vergelijkbare afbeeldingen analyseren",
+        "analyze": "Analyseren",
+        "no_eligible_photos": "Geen afbeeldingen om te analyseren",
+        "large_scan_confirm": "{count} afbeeldingen analyseren om visueel vergelijkbare te vinden? Dit kan enkele minuten duren",
         "cancel": "Annuleren",
         "preparing": "Huidige resultaten voorbereiden",
         "finding_matches": "Beste overeenkomsten zoeken",
         "building_sets": "Vergelijkbare sets samenstellen",
-        "analyzing": "Vergelijkbare foto's analyseren",
+        "analyzing": "Vergelijkbare afbeeldingen analyseren",
         "groups_title": "Vergelijkbare sets",
         "results": "Resultaten",
         "groups_count": "{count} vergelijkbare sets",
         "load_more": "Meer laden",
-        "error_title": "Kan vergelijkbare foto's niet laden",
-        "empty_title": "Geen vergelijkbare foto's gevonden",
-        "analyze_confirm": "Analyseren",
+        "error_title": "Kan vergelijkbare afbeeldingen niet laden",
+        "empty_title": "Geen vergelijkbare afbeeldingen gevonden",
         "reanalyze": "Opnieuw analyseren"
       },
       "reclaimable_size": "Vrij te maken",
       "groups_title": "Duplicaatsets",
+      "skipped_cloud_only": "{count} bestanden die alleen online beschikbaar zijn overgeslagen",
       "actions_title": "Acties",
       "compare": "Vergelijken",
       "rescan": "Opnieuw scannen",
@@ -555,12 +617,13 @@
       "keep_label": "Behouden",
       "unkeep_label": "Niet behouden",
       "delete_selected": "Selectie verwijderen",
+      "trash_all": "Alles naar de prullenmand verplaatsen",
       "delete_all": "Alles verwijderen",
       "move_selected_to_trash": "Naar prullenbak ({count} geselecteerd · {size})",
-      "no_removable_files": "Geen verwijderbare bestanden om naar de prullenbak te verplaatsen",
+      "no_removable_files": "Geen verwijderbare items om naar de prullenbak te verplaatsen",
       "set_keep": "Behouden",
       "removable_copies_summary": "{count} verwijderbare kopieën · {size}",
-      "similar_photos_summary": "{count} vergelijkbare foto's · {size}"
+      "similar_items_summary": "{count} vergelijkbare items · {size}"
     }
   },
   "tooltip": {
@@ -598,7 +661,8 @@
       "recognized_person": "Geen herkende persoon gevonden",
       "person_hint": "Indexeer gezichten in Albums om hier personen te zien",
       "camera": "Geen camera's gevonden",
-      "camera_hint": "Voeg foto's met cameragegevens toe om ze hier te zien"
+      "camera_hint": "Voeg foto's met cameragegevens toe om ze hier te zien",
+      "lens": "Geen objectieven gevonden"
     },
     "set_album_cover": {
       "success": "Albumomslag ingesteld",
@@ -608,14 +672,18 @@
       "success": "Bureaubladachtergrond bijgewerkt",
       "failed": "Kan bureaubladachtergrond niet instellen"
     },
-    "refresh_subfolders": {
-      "success": "Submappen vernieuwd",
-      "failed": "Kan submappen niet vernieuwen"
+    "refresh_folders": {
+      "success": "Mappen vernieuwd",
+      "failed": "Kan mappen niet vernieuwen"
     },
     "copy_image": {
       "success": "{count} bestand(en) naar klembord gekopieerd",
       "limit": "Je kunt maximaal {count} bestanden tegelijk kopiëren.",
       "failed": "Kan foto niet kopiëren. Niet-ondersteund formaat of beschadigd bestand."
+    },
+    "drag_out": {
+      "too_many": "Je kunt maximaal {count} bestanden tegelijk naar buiten slepen. Verklein de selectie.",
+      "failed": "Kan bestanden niet slepen. Controleer of de oorspronkelijke bestanden beschikbaar zijn."
     },
     "open_external": {
       "mixed_selection": "Selecteer alleen foto's of alleen video's om ze in een externe editor te openen.",
@@ -639,7 +707,14 @@
     "album_nested": "Deze map overlapt met een ander album"
   },
   "statusbar": {
-    "files_summary": "{count} bestanden ({size})"
+    "name_and_size": "Bestandsnaam (grootte)",
+    "color_info": "Kleurinformatie",
+    "customize": "Statusbalk aanpassen…",
+    "customize_title": "Statusbalk aanpassen",
+    "restore_defaults": "Standaardinstellingen herstellen",
+    "selection_summary": "{count} geselecteerd ({size})",
+    "files_summary": "{count} bestanden ({size})",
+    "items_summary": "{count} items ({size})"
   },
   "menu": {
     "select": {
@@ -662,6 +737,7 @@
     "album": {
       "add": "Nieuw album",
       "edit": "Album bewerken...",
+      "import_folder": "Map importeren…",
       "scan": "Album scannen",
       "reorder": "Volgorde wijzigen",
       "pause_scan": "Scannen pauzeren",
@@ -669,7 +745,7 @@
       "exclude_from_search": "Uitsluiten van zoeken",
       "remove": "Verwijderen",
       "delete_folder": "Map verwijderen",
-      "refresh_subfolders": "Submappen vernieuwen"
+      "refresh_folders": "Mappen vernieuwen"
     },
     "file": {
       "new_folder": "Nieuwe map",
@@ -680,14 +756,14 @@
       "open_image_in_app": "Foto openen in {app}...",
       "open_video_in_app": "Video openen in {app}...",
       "open_selected_images_in_app": "Foto's openen in {app}...",
-      "compare_selected_images": "Vergelijken",
+      "compare_selected_images": "Vergelijken...",
       "open_selected_videos_in_app": "Video's openen in {app}...",
       "open_in_app": "Openen in externe app...",
       "manage_app": "Apps beheren...",
       "find_similar_images": "Verwante foto's zoeken",
       "find_person_images": "Deze persoon zoeken",
       "print": "Afdrukken...",
-      "rename": "Wijzig naam",
+      "rename": "Wijzig naam...",
       "move_to": "Verplaatsen naar...",
       "copy_to": "Kopiëren naar...",
       "move_copy": "Verplaatsen / kopiëren",
@@ -703,7 +779,12 @@
       "set_as": "Instellen als",
       "set_desktop_wallpaper": "Instellen als bureaubladachtergrond",
       "show_info": "Info tonen",
-      "remove_from_collection": "Uit collectie halen"
+      "remove_from_collection": "Uit collectie halen",
+      "create_montage": "Collage maken...",
+      "save_xmp": "Metadata opslaan in XMP",
+      "xmp_save_success": "XMP-metadata opgeslagen voor {count} bestand(en)",
+      "xmp_save_failed": "XMP opslaan mislukt voor {count} bestand(en)",
+      "comment": "Beschrijving…"
     },
     "calendar": {
       "monthly": "Per maand",
@@ -711,9 +792,14 @@
       "time_asc": "Tijd oplopend",
       "time_desc": "Tijd aflopend"
     },
+    "location": {
+      "search": "Locaties zoeken"
+    },
     "camera_panel": {
       "camera_title": "Camera's",
-      "lens_title": "Objectieven"
+      "lens_title": "Objectieven",
+      "camera_search": "Camera's zoeken",
+      "lens_search": "Objectieven zoeken"
     },
     "search": {
       "clear_history": "Zoekgeschiedenis wissen"
@@ -727,27 +813,15 @@
     "tag": {
       "rename": "Wijzig naam",
       "delete": "Verwijderen",
-      "new_group": "Nieuwe groep",
-      "edit_group": "Groep bewerken",
-      "delete_group": "Groep verwijderen",
-      "search": "Tags of groepen zoeken",
-      "clear_search": "Zoekopdracht wissen",
-      "active_tag": "Geselecteerde tag in deze groep",
-      "name": "Naam",
-      "locate": "Tag opzoeken",
-      "empty": "Nog geen tags",
-      "move_to": "Verplaatsen naar groep",
-      "delete_message": "“{name}” verwijderen? De tags worden verplaatst naar Standaard. Tags op bestanden blijven behouden.",
-      "exists_in": "Deze tag bestaat al in “{group}”.",
-      "name_exists": "Er bestaat al een groep met deze naam.",
-      "new_tag_group": "Groep voor nieuwe tag"
+      "search": "Tags zoeken",
+      "clear_search": "Zoekopdracht wissen"
     },
     "meta": {
       "favorite": "Favoriet",
       "unfavorite": "Geen favoriet",
       "tag": "Tags...",
       "collection": "Collecties...",
-      "comment": "Opmerkingen...",
+      "comment": "Beschrijving…",
       "rotate": "Weergave draaien"
     },
     "sort": {
@@ -757,6 +831,7 @@
   },
   "msgbox": {
     "ok": "OK",
+    "save": "Opslaan",
     "discard": "Negeren",
     "reset": "Resetten",
     "cancel": "Annuleren",
@@ -803,7 +878,6 @@
       "hide": "Verbergen",
       "hidden": "Verborgen",
       "remove": "Verwijderen",
-      "reorder": "Volgorde wijzigen",
       "rename": "Wijzig naam",
       "switch_to": "Overschakelen naar",
       "add_new": "Nieuwe bibliotheek",
@@ -816,8 +890,6 @@
       "library_file_path": "Pad bibliotheekbestand",
       "library_file_size": "Grootte bibliotheekbestand",
       "created_at": "Aangemaakt op",
-      "clean_cache": "Ongebruikte miniaturencache opschonen",
-      "cache_cleaned": "{count} miniaturen opgeschoond, {size} vrijgemaakt.",
       "cache_size": "miniaturencache {size}"
     },
     "remove_library": {
@@ -885,41 +957,73 @@
       "ok": "Wijzig naam",
       "error": "Kan de bestandsnaam niet wijzigen."
     },
+    "batch_rename": {
+      "title": "Batch hernoemen",
+      "name": "Naam",
+      "placeholder": "Nieuwe naam",
+      "start": "Begin bij",
+      "digits": "Cijfers",
+      "no_padding": "Geen nullen",
+      "preview": "Voorbeeld",
+      "count": "{count} items",
+      "before": "Huidige naam",
+      "after": "Nieuwe naam",
+      "preview_limit": "De eerste 100 items worden getoond. Alle geselecteerde items worden hernoemd.",
+      "invalid": "Voer een naam en een positief geheel startnummer in.",
+      "success": "{count} items hernoemd."
+    },
+    "file_delete": {
+      "permanent_summary": "1 bestand wordt permanent verwijderd. | {count} bestanden worden permanent verwijderd.",
+      "trash_summary": "1 bestand wordt naar de prullenmand verplaatst. | {count} bestanden worden naar de prullenmand verplaatst.",
+      "title": "{count} bestand permanent verwijderen? | {count} bestanden permanent verwijderen?",
+      "confirm": "{count} bestand verwijderen | {count} bestanden verwijderen",
+      "irreversible": "Dit kan niet ongedaan worden gemaakt.",
+      "mixed_hint": "Geldt alleen voor RAW-paren. Andere geselecteerde items worden altijd volledig verwijderd.",
+      "trash_unavailable": "Deze bestanden konden niet naar de prullenmand worden verplaatst. Mogelijk is er geen prullenmand beschikbaar op dit station."
+    },
+    "raw_pair_delete": {
+      "scope": "Te verwijderen RAW-paardbestanden",
+      "both": "Beide bestanden",
+      "raw": "Alleen RAW",
+      "companion": "Alleen JPEG / HEIC",
+      "format": "Alleen {format}",
+      "failed": "Mislukte verwijderingen: {count}."
+    },
+    "folder_delete_contents": "Dit omvat alle bestanden en submappen.",
     "move_to_trash": {
       "title": "Naar prullenbak",
       "file_content": "Het bestand '{file}' wordt naar de prullenbak verplaatst.",
-      "files_content": "{count} geselecteerde bestanden worden naar de prullenbak verplaatst.",
-      "removable_files_content": "Alle {count} verwijderbare bestanden worden naar de prullenbak verplaatst.",
-      "raw_jpeg_companions_content": "{count} bijbehorende RAW+JPEG-bestand(en) worden ook verwijderd.",
+      "files_content": "{count} geselecteerde items worden naar de prullenbak verplaatst.",
+      "removable_files_content": "Alle {count} verwijderbare items worden naar de prullenbak verplaatst.",
       "folder_content": "De map '{folder}' wordt naar de prullenbak verplaatst.",
       "ok": "Naar prullenbak",
       "file_success": "Het bestand '{file}' is naar de prullenbak verplaatst.",
-      "files_success": "{count} geselecteerde bestanden zijn naar de prullenbak verplaatst.",
+      "files_success": "{count} geselecteerde items zijn naar de prullenbak verplaatst.",
       "folder_success": "De map '{folder}' is naar de prullenbak verplaatst.",
       "file_error": "Kan het bestand niet naar de prullenbak verplaatsen.",
-      "files_error": "Kan de geselecteerde bestanden niet naar de prullenbak verplaatsen.",
+      "files_error": "Kan de geselecteerde items niet naar de prullenbak verplaatsen.",
       "folder_error": "Kan de map niet naar de prullenbak verplaatsen."
     },
     "permanent_delete": {
       "title": "Definitief verwijderen",
       "file_content": "Het bestand '{file}' wordt definitief verwijderd.",
-      "files_content": "{count} geselecteerde bestanden worden definitief verwijderd.",
-      "removable_files_content": "Alle {count} verwijderbare bestanden worden definitief verwijderd.",
+      "files_content": "{count} geselecteerde items worden definitief verwijderd.",
+      "removable_files_content": "Alle {count} verwijderbare items worden definitief verwijderd.",
       "folder_content": "De map '{folder}' wordt definitief verwijderd.",
-      "checkbox": "Definitief verwijderen (kan niet ongedaan worden gemaakt)",
       "ok": "Verwijderen",
       "file_success": "Het bestand '{file}' is definitief verwijderd.",
-      "files_success": "{count} geselecteerde bestanden zijn definitief verwijderd.",
+      "files_success": "{count} geselecteerde items zijn definitief verwijderd.",
       "folder_success": "De map '{folder}' is definitief verwijderd.",
       "file_error": "Kan het bestand niet definitief verwijderen.",
-      "files_error": "Kan de geselecteerde bestanden niet definitief verwijderen.",
+      "files_error": "Kan de geselecteerde items niet definitief verwijderen.",
       "folder_error": "Kan de map niet definitief verwijderen."
     },
     "trash_failed": {
       "title": "Naar prullenbak mislukt",
       "file_content": "Het bestand '{file}' kon niet naar de prullenbak worden verplaatst.\n\nWil je het in plaats daarvan definitief verwijderen?",
-      "files_content": "{count} geselecteerde bestanden konden niet naar de prullenbak worden verplaatst.\n\nWil je ze in plaats daarvan definitief verwijderen?",
-      "folder_content": "De map '{folder}' kon niet naar de prullenbak worden verplaatst.\n\nWil je deze in plaats daarvan definitief verwijderen?",
+      "files_content": "{count} geselecteerde items konden niet naar de prullenbak worden verplaatst.\n\nWil je ze in plaats daarvan definitief verwijderen?",
+      "folder_content": "De map '{folder}' kon niet naar de prullenbak worden verplaatst.\n\nWil je deze in plaats daarvan definitief verwijderen?\n\nDeze actie kan niet via de prullenbak van het systeem ongedaan worden gemaakt.",
+      "folder_partial_warning": "Bij de vorige poging is mogelijk een deel van de inhoud naar de prullenbak verplaatst.",
       "ok": "Definitief verwijderen"
     },
     "open_external_many": {
@@ -933,15 +1037,15 @@
       "error": "Kan tag niet aanmaken."
     },
     "delete_tag": {
-      "title": "Tag verwijderen",
+      "title": "‘{tag}’ verwijderen?",
       "content": "De tag '{tag}' wordt verwijderd.",
       "ok": "Verwijderen",
       "success": "De tag '{tag}' is verwijderd.",
       "error": "Kan tag niet verwijderen."
     },
     "edit_comment": {
-      "title": "Opmerking bewerken",
-      "placeholder": "Voer een opmerking in",
+      "title": "Beschrijving bewerken",
+      "placeholder": "Voer een beschrijving in",
       "ok": "Opslaan"
     },
     "select_folder": {
@@ -951,6 +1055,8 @@
       "error": "Kan bestand niet kiezen."
     },
     "file_refresh": {
+      "metadata_failed": "Importeren van metagegevens mislukt: {count}",
+      "skipped": "Overgeslagen: {count}",
       "status": "Vernieuwingsstatus",
       "running": "Vernieuwen…",
       "cancelling": "Annuleren…",
@@ -1057,12 +1163,64 @@
       "overwrite": "Overschrijven",
       "save_as_new": "Opslaan als",
       "overwrite_confirm": "Weet je zeker dat je het originele bestand wilt overschrijven? Dit kan niet ongedaan worden gemaakt."
+    },
+    "montage": {
+      "title": "Collage",
+      "layout": "Indeling",
+      "pile": "Vrije collage",
+      "shuffle": "Willekeurige collage",
+      "shadow": "Schaduwen tekenen",
+      "style": "Stijl",
+      "export": "Exporteren: {size}",
+      "random_rotation": "Willekeurig draaien",
+      "border_width": "Randdikte",
+      "page": "Pagina",
+      "page_size": "Formaat",
+      "page_screen": "Scherm 16:9",
+      "page_square": "Vierkant",
+      "orientation": "Oriëntatie",
+      "landscape": "Liggend",
+      "portrait": "Staand",
+      "background": "Achtergrond",
+      "spacing": "Tussenruimte",
+      "border": "Rand",
+      "save_failed": "Opslaan van de collage mislukt:",
+      "not_enough_photos": "Selecteer minstens 2 foto's om een collage te maken.",
+      "too_many_photos": "Alleen de eerste {count} foto's worden in de collage gebruikt.",
+      "save_title": "Collage opslaan",
+      "folder": "Map",
+      "file_name": "Bestandsnaam",
+      "browse": "Bladeren...",
+      "folder_required": "Kies een map."
     }
   },
   "file_info": {
+    "metadata_placeholders": {
+      "e_title": "Korte titel",
+      "e_headline": "Kop voor publicatie",
+      "comments": "Beschrijf de inhoud of voeg context toe",
+      "e_artist": "Naam",
+      "e_artist_hint": "Eén per regel",
+      "e_copyright": "© {year} Naam"
+    },
+    "edit_metadata_no_fields": "Selecteer minstens één veld onder Organisatie bij Velden aanpassen voordat je metadata bewerkt.",
+    "edit_metadata": "Metadata bewerken",
+    "metadata_save_failed": "Metadata konden niet worden opgeslagen",
+    "paths_copied": "{count} bestandspad(en) naar klembord gekopieerd",
+    "copy_path": "Bestandspad kopiëren",
+    "copy_path_failed": "Bestandspad kopiëren mislukt",
+    "video_only": "(alleen video's)",
+    "field_preset": "Zichtbare velden",
+    "fields_default": "Standaard",
+    "fields_all": "Alles tonen",
+    "fields_custom": "Aangepast",
+
+    "hide_empty_fields": "Lege velden automatisch verbergen",
+    "customize_fields": "Velden aanpassen",
     "title": "Informatie",
     "preview": "Voorbeeld",
     "thumbnail": "Miniatuur",
+    "change_thumbnail": "Miniatuur wijzigen",
     "histogram": "Histogram",
     "preview_size": "Miniatuurgrootte",
     "general": "Algemeen",
@@ -1078,6 +1236,7 @@
     "dimension": "Afmetingen",
     "size": "Grootte",
     "duration": "Duur",
+    "unknown_duration": "Onbekend",
     "created_at": "Aangemaakt op",
     "modified_at": "Gewijzigd op",
     "last_scan_time": "Laatst gescand",
@@ -1108,8 +1267,40 @@
     "gps_altitude": "Hoogte",
     "geo_location": "Locatie",
     "tags": "Tags",
-    "comment": "Opmerking",
-    "capture_settings": "Opname-instellingen"
+    "comment": "Beschrijving",
+    "capture_settings": "Belichting",
+    "organization": "Organisatie",
+    "file": "Bestand",
+    "capture": "Opname",
+    "source_metadata": "Overige informatie",
+    "source_description": "Oorspronkelijke beschrijving",
+    "coordinates": "Coördinaten",
+    "detail_fields": {
+      "title": "Titel",
+      "headline": "Koptekst",
+      "creator": "Maker",
+      "copyright": "Copyright",
+      "credit": "Naamsvermelding",
+      "source": "Bron",
+      "usageTerms": "Gebruiksvoorwaarden",
+      "rightsUrl": "Copyright-URL",
+      "software": "Software",
+      "flash": "Flitser",
+      "whiteBalance": "Witbalans",
+      "exposureMode": "Belichtingsmodus",
+      "exposureProgram": "Belichtingsprogramma",
+      "meteringMode": "Lichtmeting",
+      "focalLength35mm": "35mm-equivalent",
+      "timeZone": "Tijdzone opname",
+      "direction": "Opnamerichting",
+      "directionRef": "Noordreferentie",
+      "iccProfile": "ICC-profiel",
+      "colorSpace": "Kleurruimte",
+      "bitDepth": "Bitdiepte"
+    },
+    "metadata_details_retry": "Metagegevens konden niet worden gelezen. Klik om opnieuw te proberen.",
+    "true_north": "Ware noorden",
+    "magnetic_north": "Magnetische noorden"
   },
   "map": {
     "show_map": "Kaart tonen",
@@ -1127,14 +1318,6 @@
     "photos_in_view_limited": "Eerste {count} foto's getoond - zoom in voor meer"
   },
   "format": {
-    "year": "yyyy",
-    "month": "MMMM yyyy",
-    "date": "dd-MM-yyyy",
-    "date_long": "d MMMM yyyy",
-    "month_date": "d MMMM",
-    "date_long_with_weekday": "EEEE d MMMM yyyy",
-    "date_time": "dd-MM-yyyy HH:mm:ss",
-    "date_time_long": "d MMMM yyyy HH:mm:ss",
     "relative_time": {
       "just_now": "zojuist",
       "seconds": "{count} seconden geleden",
@@ -1147,12 +1330,17 @@
     }
   },
   "image_viewer": {
+    "sharpness_grid": "Scherpteraster in de navigator",
+    "sharpness_grid_hint": "Markeer scherpe gebieden in de navigator",
     "live": "LIVE",
     "motion": "MOTION",
     "title": "Fotoviewer",
     "loading": "Laden...",
     "loading_original": "Originele foto laden...",
+    "media_server_unavailable": "De originele foto’s en video’s konden niet worden geladen. Start Lap opnieuw om het nogmaals te proberen.",
     "failed": "Kan foto niet laden. Het bestand ontbreekt of is beschadigd.",
+    "raw_render_unavailable": "Kan deze RAW niet renderen; ingesloten voorbeeld getoond.",
+    "af_unavailable": "Geen ondersteunde AF-gegevens voor deze afbeelding",
     "toolbar": {
       "prev": "Vorige",
       "next": "Volgende",
@@ -1162,6 +1350,7 @@
       "zoom_out": "Uitzoomen",
       "zoom_fit": "Passend in venster",
       "zoom_actual": "Ware grootte",
+      "af_area": "AF-gebieden tonen",
       "fullscreen": "Volledig scherm",
       "exit_fullscreen": "Volledig scherm verlaten",
       "pin": "Werkbalk vastzetten",
@@ -1176,6 +1365,7 @@
     "loading_compatible": "Compatibele weergave voorbereiden...",
     "failed": "Video kan niet worden afgespeeld",
     "errors": {
+      "playback_failed": "Afspelen mislukt",
       "aborted": "Laden van video is geannuleerd",
       "network": "Netwerkfout bij het laden van de video",
       "decode": "Fout bij het decoderen van de video",
@@ -1193,14 +1383,14 @@
   "settings": {
     "general": {
       "title": "Algemeen",
-      "section_language": "Taal",
+      "section_language": "Taal en regio",
       "section_appearance": "Weergave",
       "section_interface": "Interface",
-      "section_updates": "Updates",
       "appearance": "Kleurmodus",
       "appearance_options": [
         "Licht",
-        "Donker"
+        "Donker",
+        "Systeem volgen"
       ],
       "theme": "Thema",
       "theme_options_light": [
@@ -1243,6 +1433,11 @@
         "Abyss"
       ],
       "select_language": "Kies taal",
+      "date_time_format": "Datum- en tijdnotatie",
+      "date_time_format_options": [
+        "Systeem volgen",
+        "App-taal volgen"
+      ],
       "font_size": "Lettergrootte",
       "font_size_options": [
         "Kleiner",
@@ -1255,16 +1450,36 @@
       "show_status_bar": "Statusbalk tonen",
       "auto_check_updates": "Automatisch controleren op updates"
     },
+    "raw": {
+      "title": "RAW",
+      "section_pairs": "Gekoppelde bestanden",
+      "pair_source": "Standaardweergave voor paren",
+      "pair_source_hint": "Gebruikt voor miniaturen en voorbeelden van gekoppelde bestanden",
+      "pair_jpeg": "JPEG / HEIC",
+      "rawPreviewSource": "Standaardvoorbeeldbron",
+      "preview_source_hint": "Als de voorkeursbron ontbreekt, wordt de andere gebruikt",
+      "option_embedded": "Ingesloten voorbeeld",
+      "option_rendered": "RAW renderen",
+      "option_brightened": "Automatisch oplichten",
+      "show_pair": "Gekoppelde {format} tonen",
+      "source_embedded": "Ingesloten voorbeeld",
+      "source_rendered": "RAW renderen",
+      "source_brightened": "Automatisch oplichten",
+      "preview_mode": "RAW-voorbeeldmodus"
+    },
+    "metadata": {
+      "title": "Metagegevens",
+      "section_import": "Metagegevens importeren",
+      "import": "Uit EXIF, IPTC en XMP",
+      "import_hint": "Importeer favorieten, beoordelingen, schiftmarkeringen, tags en beschrijvingen bij scans en vernieuwingen, met behoud van lokale wijzigingen."
+    },
     "browse": {
-      "title": "Bladeren",
-      "section_album": "Album",
+      "section_album": "Albummap",
       "show_subfolder_files": "Bestanden uit submappen tonen",
       "show_subfolder_files_hint": "De mapweergave toont ook bestanden in onderliggende mappen",
-      "section_file_display": "Bestandsweergave",
       "group_raw_jpeg_pairs": "RAW-paren groeperen",
       "group_raw_jpeg_pairs_hint": "Toon bij elkaar horende RAW- en JPEG/HEIC-bestanden als één item",
-      "section_sorting": "Sorteren",
-      "folder_sort": "Mappen",
+      "folder_sort": "Mapvolgorde",
       "folder_sort_hint": "Sorteervolgorde voor mappen onder albums",
       "folder_sort_options": [
         "Naam (A tot Z)",
@@ -1272,23 +1487,14 @@
         "Datum (oudste eerst)",
         "Datum (nieuwste eerst)"
       ],
-      "calendar_sort": "Kalender",
-      "calendar_sort_hint": "Op basis van opnamedatum of wijzigingsdatum",
       "calendar_sort_options": [
-        "Opnamedatum (oplopend)",
-        "Opnamedatum (aflopend)",
-        "Aanmaakdatum (oplopend)",
-        "Aanmaakdatum (aflopend)",
-        "Wijzigingsdatum (oplopend)",
-        "Wijzigingsdatum (aflopend)"
+        "Opnamedatum",
+        "Aanmaakdatum",
+        "Wijzigingsdatum"
       ],
-      "category_sort": "Categorieën",
-      "category_sort_hint": "Tags, locaties, personen en camera's",
       "category_sort_options": [
-        "Naam (A tot Z)",
-        "Naam (Z tot A)",
-        "Aantal (laag naar hoog)",
-        "Aantal (hoog naar laag)"
+        "Naam",
+        "Aantal"
       ]
     },
     "grid": {
@@ -1324,7 +1530,7 @@
         "Locatie",
         "Camera",
         "Objectief",
-        "Opname-instellingen"
+        "Belichting"
       ],
       "show_thumbnail_badges": "Badges op miniaturen tonen",
       "thumbnail_badge_options": [
@@ -1401,7 +1607,7 @@
     },
     "image_search": {
       "title": "Zoeken",
-      "search_image": "Foto's zoeken",
+      "search_image": "Afbeeldingen zoeken",
       "search_model": "Kies model",
       "default_model_hint": "Het standaardmodel ondersteunt alleen zoeken in het Engels",
       "multilingual_model_hint": "Zoeken in meer dan 50 talen",
@@ -1425,9 +1631,9 @@
       ]
     },
     "similar_photos": {
-      "title": "Vergelijkbare foto's",
+      "title": "Vergelijkbare afbeeldingen",
       "grouping_strictness": "Strengheid groeperen",
-      "grouping_strictness_hint": "Bepaalt hoe sterk foto's moeten overeenkomen om in dezelfde set te komen",
+      "grouping_strictness_hint": "Bepaalt hoe sterk afbeeldingen moeten overeenkomen om in dezelfde set te komen",
       "grouping_strictness_options": [
         "Zeer streng",
         "Streng",
@@ -1458,18 +1664,21 @@
         "last_image": "Laatste",
         "page_up": "Pagina omhoog",
         "page_down": "Pagina omlaag",
-        "quick_preview": "Snelle weergave openen",
+        "quick_preview": "Snelle weergave openen / afbeeldingsvoorbeeld sluiten",
+        "toggle_playback": "Video pauzeren / hervatten",
         "close_viewer": "Viewer sluiten",
         "search_similar": "Verwante foto's zoeken",
         "show_info": "Info tonen",
         "zoom_in": "Inzoomen",
         "zoom_out": "Uitzoomen",
         "zoom_fit": "Wisselen tussen ware grootte / passend in venster",
+        "cycle_raw_preview": "RAW-voorbeeldmodus wisselen",
+        "toggle_af_areas": "AF-gebieden tonen/verbergen",
         "cycle_background": "Achtergrond wisselen",
-        "toggle_slideshow": "Diavoorstelling afspelen / pauzeren",
         "open_new_window": "Bekijken in nieuw venster",
         "open_external_app": "Openen in externe app",
         "edit_image": "Bewerken",
+        "copy_file_path": "Bestandspad kopiëren",
         "copy_file": "Kopiëren naar klembord",
         "paste_file": "Plakken",
         "reveal_in_finder": "Toon in Finder",
@@ -1485,20 +1694,25 @@
         "delete_permanently": "Definitief verwijderen",
         "refresh_file_info": "Bestandsinfo vernieuwen",
         "print": "Afdrukken",
-        "toggle_favorite": "Favoriet aan/uit",
-        "set_clear_rating": "Beoordeling instellen / wissen",
-        "mark_pick": "Markeren als gekozen",
-        "mark_rejected": "Markeren als afgewezen",
-        "mark_unreviewed": "Markeren als niet bekeken",
+        "toggle_favorite": "Toevoegen aan / Verwijderen uit favorieten",
+        "toggle_favorite_and_next": "Toevoegen aan / Verwijderen uit favorieten → Volgende",
+        "set_clear_rating": "Beoordeling",
+        "set_clear_rating_and_next": "Beoordeling → Volgende",
+        "mark_pick": "Schiften · Gekozen",
+        "mark_pick_and_next": "Schiften · Gekozen → Volgende",
+        "mark_rejected": "Schiften · Afgewezen",
+        "mark_rejected_and_next": "Schiften · Afgewezen → Volgende",
+        "mark_unreviewed": "Schiften · Niet bekeken",
+        "mark_unreviewed_and_next": "Schiften · Niet bekeken → Volgende",
         "clear_rating": "Beoordeling wissen",
         "rate_one": "1 ster geven",
         "rate_two": "2 sterren geven",
         "rate_three": "3 sterren geven",
         "rate_four": "4 sterren geven",
         "rate_five": "5 sterren geven",
-        "edit_tags": "Tags bewerken",
-        "edit_collections": "Collecties bewerken",
-        "edit_comment": "Opmerking bewerken",
+        "edit_tags": "Tags",
+        "edit_collections": "Collecties",
+        "edit_comment": "Beschrijving",
         "rotate": "Weergave draaien (rechtsom)",
         "rotate_counterclockwise": "Weergave draaien (linksom)",
         "thumbnail_increase": "Miniaturen vergroten",
@@ -1506,44 +1720,66 @@
       }
     },
     "advanced": {
+      "file_delete_behavior": "Bij het verwijderen van bestanden",
+      "file_delete_trash_hint": "Verplaats één bestand zonder bevestiging naar de prullenmand",
+      "file_delete_permanent_hint": "Permanent verwijderen vereist altijd bevestiging",
+      "file_delete_section": "Bestanden verwijderen",
       "title": "Geavanceerd",
-      "section_thumbnail_cache": "Miniaturencache",
-      "thumbnail_quality": "Kwaliteit miniaturen",
-      "thumbnail_quality_hint": "Bepaalt de resolutie van gegenereerde miniaturen. Hogere instellingen zijn scherper, maar genereren duurt langer en kost meer schijfruimte",
-      "raw_thumbnail_source": "Bron RAW-miniaturen",
-      "raw_thumbnail_source_hint": "Kies hoe miniaturen voor RAW-bestanden worden gegenereerd",
-      "raw_thumbnail_source_options": [
-        "RAW-rendering (standaard)",
-        "Ingesloten voorbeeld (sneller)"
-      ],
-      "section_map": "Kaart",
-      "map_provider": "Kaartaanbieder",
-      "map_provider_hint": "Kies de kaartdienst voor de kaartweergave",
-      "map_provider_options": [
-        "Wereldwijd (standaard)",
-        "China (Tianditu)"
-      ],
-      "tianditu_token": "Tianditu API-token",
-      "tianditu_token_hint": "Vereist voor Tianditu-kaarttegels",
-      "tianditu_token_placeholder": "Plak je token",
-      "tianditu_token_status_saved": "Opgeslagen",
-      "tianditu_token_status_empty": "Niet ingesteld",
-      "thumbnail_quality_options": [
-        "Laag (256 px)",
-        "Standaard (512 px)",
-        "Hoog (1024 px)"
-      ],
-      "section_external_apps": "Externe apps",
-      "manage_external_apps": "Externe apps beheren",
-      "external_image_editor": "Foto openen in",
-      "external_video_app": "Video openen in",
-      "external_app_not_selected": "Geen app gekozen",
-      "choose_app": "Kiezen",
-      "clear_app": "Wissen",
-      "default_app": "Standaard",
-      "set_default_app": "Als standaard instellen",
+      "external_app": {
+        "section_external_apps": "Externe apps",
+        "manage_external_apps": "Externe apps beheren",
+        "external_image_editor": "Foto openen in",
+        "external_video_app": "Video openen in",
+        "external_app_not_selected": "Geen app gekozen",
+        "choose_app": "Kiezen",
+        "clear_app": "Wissen",
+        "default_app": "Standaard",
+        "set_default_app": "Als standaard instellen"
+      },
       "section_diagnostics": "Diagnose",
-      "debug_mode": "Debugmodus"
+      "debug_mode": "Debugmodus",
+      "map": {
+        "section_map": "Kaart",
+        "map_provider": "Kaartaanbieder",
+        "map_provider_hint": "Kies de kaartdienst voor de kaartweergave",
+        "map_provider_options": [
+          "Wereldwijd (standaard)",
+          "China (Tianditu)"
+        ],
+        "tianditu_token": "Tianditu API-token",
+        "tianditu_token_hint": "Vereist voor Tianditu-kaarttegels",
+        "tianditu_token_placeholder": "Plak je token",
+        "tianditu_token_status_saved": "Opgeslagen",
+        "tianditu_token_status_empty": "Niet ingesteld"
+      },
+      "thumbnail_cache": {
+        "rolling_back": "Terugdraaien…",
+        "cancelled": "Geannuleerd. De oorspronkelijke cache is behouden.",
+        "new_location": "Nieuwe locatie: {path}",
+        "migrating": "Miniaturen worden verplaatst…",
+        "migration_hint": "Miniaturen van alle bibliotheken worden verplaatst. De nieuwe locatie wordt pas actief na een geslaagde migratie. Bij annuleren blijft de huidige cachelocatie behouden.",
+        "migration_progress": "Migratievoortgang",
+        "ready": "Klaar om te migreren",
+        "start": "Starten",
+        "cancelling": "Annuleren…",
+        "rebuild_message": "De vorige cachelocatie is niet beschikbaar. Doorgaan zonder de bestanden te verplaatsen? Miniaturen worden zo nodig op de nieuwe locatie opnieuw gemaakt. Bibliotheekgegevens, originele foto’s en bestanden op de vorige schijf blijven ongewijzigd.",
+        "rebuild_confirm": "Doorgaan en opnieuw maken",
+        "section_thumbnail_cache": "Miniaturencache",
+        "thumbnail_quality": "Resolutie van miniaturen wijzigen",
+        "thumbnail_quality_hint": "Hogere instellingen zijn scherper, maar genereren duurt langer en kost meer schijfruimte",
+        "thumbnail_quality_options": [
+          "Laag (256 px)",
+          "Standaard (512 px)",
+          "Hoog (1024 px)"
+        ],
+        "unavailable": "Cachelocatie niet beschikbaar. Sluit de schijf weer aan voordat u deze cache gebruikt of verplaatst.",
+        "current_location": "Cachelocatie wijzigen",
+        "counting": "Cachebestanden tellen…",
+        "finishing": "Verplaatsing afronden…",
+        "success": "Cachelocatie voor miniaturen gewijzigd",
+        "cleanup_warning": "De cache is verplaatst, maar sommige oude bestanden konden niet worden verwijderd:",
+        "busy": "Wacht tot de miniaturencache is verplaatst."
+      }
     },
     "database": {
       "title": "Opslag",
@@ -1560,6 +1796,7 @@
       "restore_default_confirm_ok": "Herstellen",
       "busy_library_indexing": "De gegevenslocatie kan niet worden gewijzigd terwijl de bibliotheek wordt geïndexeerd.",
       "busy_face_indexing": "De gegevenslocatie kan niet worden gewijzigd terwijl gezichten worden geïndexeerd.",
+      "cleanup_warning": "De bibliotheekgegevens zijn verplaatst, maar sommige oude bestanden konden niet worden verwijderd:",
       "change_success": "De bibliotheekgegevens zijn verplaatst",
       "restore_default_success": "De bibliotheekgegevens zijn teruggezet naar de standaardlocatie",
       "backup": "Back-up",
@@ -1615,6 +1852,7 @@
         "feedback": "Feedback",
         "privacy": "Privacy"
       },
+      "section_updates": "Updates",
       "auto_update": {
         "update": "Bijwerken",
         "check": "Controleren op updates",

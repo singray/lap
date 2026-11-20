@@ -7,17 +7,17 @@
       <!-- Sidebar -->
       <div class="w-40 m-1 p-2 bg-base-200/30 flex flex-col rounded-box overflow-y-auto shrink-0 select-none">
         <div
-          v-for="(tab, index) in settingsTabs"
-          :key="index"
+          v-for="tab in settingsTabs"
+          :key="tab.id"
           :class="[
-            'px-3 py-2 rounded-box cursor-pointer transition-all duration-200 font-medium flex items-center',
-            config.settings.tabIndex === index 
+            'px-3 py-2 rounded-box cursor-pointer transition-colors duration-200 font-medium flex items-center',
+            config.settings.tabIndex === tab.id
               ? 'bg-base-100 text-primary' 
               : 'hover:text-base-content hover:bg-base-100/30'
           ]"
-          @click="config.settings.tabIndex = index"
+          @click="config.settings.tabIndex = tab.id"
         >
-          {{ $t(tab) }}
+          {{ $t(tab.label) }}
         </div>
       </div>
 
@@ -25,7 +25,7 @@
       <div class="p-2 mr-1 mb-2 flex-1 overflow-y-auto scrollbar-hide bg-base-300 cursor-default select-none">
           
         <!-- General Tab -->
-        <div v-if="config.settings.tabIndex === 0" class="flex flex-col space-y-2">
+        <div v-if="config.settings.tabIndex === SETTINGS_TAB.GENERAL" class="flex flex-col space-y-2">
           
           <!-- languange -->
           <div class="rounded-box p-2 space-y-2 bg-base-300/30 border border-base-content/5 shadow-sm">
@@ -37,8 +37,16 @@
                 <div>{{ $t('settings.general.select_language') }}</div>
                 <div v-if="config.settings.language !== 'en'" class="text-xs text-base-content/30">Select language</div>
               </div>
-              <select class="select  select-bordered select-sm min-w-32" v-model="config.settings.language">
+              <select class="select  select-bordered select-sm min-w-32" :value="config.settings.language" @change="changeLanguage(($event.target as HTMLSelectElement).value)">
                 <option v-for="(lang, index) in languages" :key="index" :value="lang.value">{{ lang.label }}</option>
+              </select>
+            </div>
+            <div class="flex items-center justify-between px-1 rounded-box hover:bg-base-100/10 transition-colors duration-200">
+              <div class="flex flex-col gap-0.5 text-sm leading-5">
+                <div>{{ $t('settings.general.date_time_format') }}</div>
+              </div>
+              <select class="select select-bordered select-sm min-w-40" v-model="config.settings.dateTimeFormat">
+                <option v-for="option in dateTimeFormatOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
               </select>
             </div>
           </div>
@@ -89,27 +97,28 @@
               <div class="flex flex-col gap-0.5 text-sm leading-5">
                 <div>{{ $t('settings.general.show_status_bar') }}</div>
               </div>
-              <input type="checkbox" class="toggle toggle-primary toggle-sm" v-model="config.settings.showStatusBar" />
-            </div>
-          </div>
-
-          <!-- updates -->
-          <div class="rounded-box p-2 space-y-2 bg-base-300/30 border border-base-content/5 shadow-sm">
-            <div class="flex items-center gap-2 text-base-content/30">
-              <span class="font-bold uppercase text-[10px] tracking-widest">{{ $t('settings.general.section_updates') }}</span>
-            </div>
-            <div class="flex items-center justify-between p-1 rounded-box hover:bg-base-100/10 transition-colors duration-200">
-              <div class="flex flex-col gap-0.5 text-sm leading-5">
-                <div>{{ $t('settings.general.auto_check_updates') }}</div>
+              <div class="flex shrink-0 items-center gap-2">
+                <button
+                  :disabled="!config.settings.showStatusBar"
+                  class="btn btn-sm btn-ghost rounded-box bg-base-100 border border-base-content/30 text-base-content/70 hover:text-base-content"
+                  @click="showStatusBarFieldsDialog = true"
+                >
+                  {{ $t('statusbar.customize') }}
+                </button>
+                <input
+                  v-model="config.settings.showStatusBar"
+                  type="checkbox"
+                  class="toggle toggle-primary toggle-sm"
+                  :aria-label="$t('settings.general.show_status_bar')"
+                />
               </div>
-              <input type="checkbox" class="toggle toggle-primary toggle-sm" v-model="config.settings.autoCheckUpdates" />
             </div>
           </div>
 
         </div>
 
         <!-- Grid Tab -->
-        <div v-else-if="config.settings.tabIndex === 2" class="flex flex-col space-y-2">
+        <div v-else-if="config.settings.tabIndex === SETTINGS_TAB.GRID" class="flex flex-col space-y-2">
 
           <!-- grid view -->
           <div class="rounded-box p-2 space-y-2 bg-base-300/30 border border-base-content/5 shadow-sm">
@@ -199,7 +208,7 @@
         </div>
 
         <!-- Viewer Tab -->
-        <div v-else-if="config.settings.tabIndex === 3" class="flex flex-col space-y-2">
+        <div v-else-if="config.settings.tabIndex === SETTINGS_TAB.IMAGE_VIEW" class="flex flex-col space-y-2">
 
           <!-- navigation -->
           <div class="rounded-box p-2 space-y-2 bg-base-300/30 border border-base-content/5 shadow-sm">
@@ -232,6 +241,13 @@
                   <option v-for="(option, index) in navigatorViewSizeOptions" :key="index" :value="option.value">{{ option.label }}</option>
               </select>
             </div>
+            <label class="flex items-center justify-between px-1 rounded-box hover:bg-base-100/10 transition-colors duration-200">
+              <span class="flex flex-col gap-0.5 text-sm leading-5">
+                <span>{{ $t('image_viewer.sharpness_grid') }}</span>
+                <span class="text-xs text-base-content/30">{{ $t('image_viewer.sharpness_grid_hint') }}</span>
+              </span>
+              <input type="checkbox" class="toggle toggle-primary toggle-sm" v-model="config.settings.navigatorSharpnessGrid" />
+            </label>
           </div>
 
           <!-- view -->
@@ -281,8 +297,51 @@
 
         </div>
 
+        <!-- RAW Tab -->
+        <div v-else-if="config.settings.tabIndex === SETTINGS_TAB.RAW" class="flex flex-col space-y-2">
+          <div class="rounded-box p-2 space-y-2 bg-base-300/30 border border-base-content/5 shadow-sm">
+            <div class="flex items-center gap-2 text-base-content/30">
+              <span class="font-bold uppercase text-[10px] tracking-widest">{{ $t('settings.raw.section_pairs') }}</span>
+            </div>
+            <div class="flex items-center justify-between gap-3 px-1 rounded-box hover:bg-base-100/10 transition-colors duration-200">
+              <label for="raw-group-pairs" class="min-w-0 flex flex-col gap-0.5 text-sm leading-5">
+                <span>{{ $t('settings.browse.group_raw_jpeg_pairs') }}</span>
+                <span class="text-xs text-base-content/30">{{ $t('settings.browse.group_raw_jpeg_pairs_hint') }}</span>
+              </label>
+              <input id="raw-group-pairs" type="checkbox" class="toggle toggle-primary toggle-sm shrink-0" v-model="config.settings.groupRawJpegPairs" />
+            </div>
+            <div v-if="config.settings.groupRawJpegPairs" class="flex items-center justify-between gap-3 px-1 rounded-box hover:bg-base-100/10 transition-colors duration-200">
+              <label for="raw-pair-source" class="min-w-0 flex flex-col gap-0.5 text-sm leading-5">
+                <span>{{ $t('settings.raw.pair_source') }}</span>
+                <span class="text-xs text-base-content/30">{{ $t('settings.raw.pair_source_hint') }}</span>
+              </label>
+              <select id="raw-pair-source" class="select select-bordered select-sm w-40 shrink-0 max-w-full" v-model="config.settings.rawPairDisplaySource">
+                <option value="jpeg">{{ $t('settings.raw.pair_jpeg') }}</option>
+                <option value="raw">RAW</option>
+              </select>
+            </div>
+          </div>
+          <div class="rounded-box p-2 space-y-2 bg-base-300/30 border border-base-content/5 shadow-sm">
+            <div class="flex items-center gap-2 text-base-content/30">
+              <span id="raw-preview-heading" class="font-bold uppercase text-[10px] tracking-widest">{{ $t('settings.raw.preview_mode') }}</span>
+            </div>
+            <div v-for="field in rawPreviewFields" :key="field.key" class="flex items-center justify-between gap-3 px-1 rounded-box hover:bg-base-100/10 transition-colors duration-200">
+              <label :for="field.key" class="min-w-0 flex flex-col gap-0.5 text-sm leading-5">
+                <span>{{ $t('settings.raw.' + field.key) }}</span>
+                <span v-if="field.hint" class="text-xs text-base-content/30">{{ $t('settings.raw.' + field.hint) }}</span>
+              </label>
+              <select :id="field.key" class="select select-bordered select-sm w-48 shrink-0 max-w-full" v-model="config.settings[field.key]">
+                <option v-for="option in field.options" :key="option" :value="option">{{ $t('settings.raw.option_' + option) }}</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- Metadata Tab -->
+        <SettingsMetadata v-else-if="config.settings.tabIndex === SETTINGS_TAB.METADATA" />
+
         <!-- Search Tab -->
-        <div v-else-if="config.settings.tabIndex === 4" class="flex flex-col overflow-hidden space-y-2">
+        <div v-else-if="config.settings.tabIndex === SETTINGS_TAB.IMAGE_SEARCH" class="flex flex-col overflow-hidden space-y-2">
 
           <!-- image search -->
           <div class="rounded-box p-2 space-y-2 bg-base-300/30 border border-base-content/5 shadow-sm">
@@ -324,8 +383,8 @@
                 ></progress>
                 <button
                   class="btn btn-ghost btn-xs h-6 min-h-0 w-6 p-0 text-base-content/30 hover:text-base-content"
-                  :title="$t('msgbox.cancel')"
-                  :aria-label="$t('msgbox.cancel')"
+                  :title="$t('image_viewer.toolbar.pause')"
+                  :aria-label="$t('image_viewer.toolbar.pause')"
                   @click="cancelMultilingualModelDownload"
                 >
                   <IconClose class="w-3.5 h-3.5" />
@@ -393,143 +452,81 @@
           </div>
         </div>
 
-        <!-- Browse Tab -->
-        <div v-else-if="config.settings.tabIndex === 1" class="flex flex-col space-y-2">
-
-          <!-- album -->
-          <div class="rounded-box p-2 space-y-2 bg-base-300/30 border border-base-content/5 shadow-sm">
-            <div class="flex items-center gap-2 text-base-content/30">
-              <span class="font-bold uppercase text-[10px] tracking-widest">{{ $t('settings.browse.section_album') }}</span>
-            </div>
-            <div class="flex items-center justify-between px-1 rounded-box hover:bg-base-100/10 transition-colors duration-200">
-              <div class="flex flex-col gap-0.5 text-sm leading-5">
-                <div>{{ $t('settings.browse.show_subfolder_files') }}</div>
-                <div class="text-xs text-base-content/30">{{ $t('settings.browse.show_subfolder_files_hint') }}</div>
-              </div>
-              <input type="checkbox" class="toggle toggle-primary toggle-sm" v-model="config.settings.showSubfolderFiles" />
-            </div>
-          </div>
-
-          <!-- file display -->
-          <div class="rounded-box p-2 space-y-2 bg-base-300/30 border border-base-content/5 shadow-sm">
-            <div class="flex items-center gap-2 text-base-content/30">
-              <span class="font-bold uppercase text-[10px] tracking-widest">{{ $t('settings.browse.section_file_display') }}</span>
-            </div>
-            <div class="flex items-center justify-between px-1 rounded-box hover:bg-base-100/10 transition-colors duration-200">
-              <div class="flex flex-col gap-0.5 text-sm leading-5">
-                <div>{{ $t('settings.browse.group_raw_jpeg_pairs') }}</div>
-                <div class="text-xs text-base-content/30">{{ $t('settings.browse.group_raw_jpeg_pairs_hint') }}</div>
-              </div>
-              <input type="checkbox" class="toggle toggle-primary toggle-sm" v-model="config.settings.groupRawJpegPairs" />
-            </div>
-
-          </div>
-
-          <!-- sorting -->
-          <div class="rounded-box p-2 space-y-2 bg-base-300/30 border border-base-content/5 shadow-sm">
-            <div class="flex items-center gap-2 text-base-content/30">
-              <span class="font-bold uppercase text-[10px] tracking-widest">{{ $t('settings.browse.section_sorting') }}</span>
-            </div>
-            <div class="flex items-center justify-between px-1 rounded-box hover:bg-base-100/10 transition-colors duration-200">
-              <div class="flex flex-col gap-0.5 text-sm leading-5">
-                <div>{{ $t('settings.browse.folder_sort') }}</div>
-                <div class="text-xs text-base-content/30">{{ $t('settings.browse.folder_sort_hint') }}</div>
-              </div>
-              <select class="select select-bordered select-sm min-w-40" v-model="config.settings.folderSort">
-                <option v-for="option in folderSortOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-              </select>
-            </div>
-            <div class="flex items-center justify-between px-1 rounded-box hover:bg-base-100/10 transition-colors duration-200">
-              <div class="flex flex-col gap-0.5 text-sm leading-5">
-                <div>{{ $t('settings.browse.calendar_sort') }}</div>
-                <div class="text-xs text-base-content/30">{{ $t('settings.browse.calendar_sort_hint') }}</div>
-              </div>
-              <select class="select select-bordered select-sm min-w-40" v-model="config.settings.calendarSort">
-                <option v-for="option in calendarSortOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-              </select>
-            </div>
-            <div class="flex items-center justify-between px-1 rounded-box hover:bg-base-100/10 transition-colors duration-200">
-              <div class="flex flex-col gap-0.5 text-sm leading-5">
-                <div>{{ $t('settings.browse.category_sort') }}</div>
-                <div class="text-xs text-base-content/30">{{ $t('settings.browse.category_sort_hint') }}</div>
-              </div>
-              <select class="select select-bordered select-sm min-w-40" v-model="config.settings.categorySort">
-                <option v-for="option in categorySortOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-              </select>
-            </div>
-          </div>
-
-        </div>
-
         <!-- Advanced Tab -->
-        <div v-else-if="config.settings.tabIndex === 5" class="flex flex-col space-y-2">
+        <div v-else-if="config.settings.tabIndex === SETTINGS_TAB.ADVANCED" class="flex flex-col space-y-2">
+          <section class="rounded-box p-2 space-y-2 bg-base-300/30 border border-base-content/5 shadow-sm" aria-labelledby="file-delete-settings">
+            <h2 id="file-delete-settings" class="font-bold uppercase text-[10px] tracking-widest text-base-content/30">{{ $t('settings.advanced.file_delete_section') }}</h2>
+            <label class="flex items-start justify-between gap-4 px-1 rounded-box hover:bg-base-100/10 transition-colors duration-200">
+              <span class="min-w-0 flex flex-col gap-0.5 text-sm leading-5">
+                <span>{{ $t('settings.advanced.file_delete_behavior') }}</span>
+                <span class="text-xs text-base-content/30">{{ $t(config.settings.fileDeleteBehavior === 'permanent' ? 'settings.advanced.file_delete_permanent_hint' : 'settings.advanced.file_delete_trash_hint') }}</span>
+              </span>
+              <select v-model="config.settings.fileDeleteBehavior" class="select select-bordered select-sm w-auto min-w-36 shrink-0">
+                <option value="trash">{{ $t('msgbox.move_to_trash.title') }}</option>
+                <option value="permanent">{{ $t('msgbox.permanent_delete.title') }}</option>
+              </select>
+            </label>
+          </section>
+
 
           <!-- thumbnail cache -->
           <div class="rounded-box p-2 space-y-2 bg-base-300/30 border border-base-content/5 shadow-sm">
             <div class="flex items-center gap-2 text-base-content/30">
-              <span class="font-bold uppercase text-[10px] tracking-widest">{{ $t('settings.advanced.section_thumbnail_cache') }}</span>
+              <span class="font-bold uppercase text-[10px] tracking-widest">{{ $t('settings.advanced.thumbnail_cache.section_thumbnail_cache') }}</span>
             </div>
+
+            <!-- cache location -->
             <div class="flex items-center justify-between gap-4 px-1 rounded-box hover:bg-base-100/10 transition-colors duration-200">
               <div class="min-w-0 flex flex-col gap-0.5 text-sm leading-5">
-                <div>{{ $t('settings.advanced.thumbnail_quality') }}</div>
-                <div class="text-xs text-base-content/30">{{ $t('settings.advanced.thumbnail_quality_hint') }}</div>
+                <div>{{ $t('settings.advanced.thumbnail_cache.current_location') }}</div>
+                <div class="text-xs text-base-content/30 truncate" :title="thumbnailCacheDir">
+                  {{ hasCustomThumbnailCache ? thumbnailCacheDir : $t('settings.database.system_default') }}
+                </div>
+                <div v-if="!thumbnailCacheAvailable" class="text-xs text-warning" role="status">
+                  {{ $t('settings.advanced.thumbnail_cache.unavailable') }}
+                </div>
+              </div>
+              <div class="shrink-0 flex items-center gap-2">
+                <button
+                  class="btn btn-sm btn-ghost rounded-box bg-base-100 border border-base-content/30 text-base-content/70 hover:text-base-content"
+                  :disabled="isChangingThumbnailCache || isChangingDbStorage"
+                  @click="chooseThumbnailCacheDir"
+                >
+                  {{ isChangingThumbnailCache ? $t('tooltip.loading') : $t('settings.database.change_location') }}
+                </button>
+                <TButton
+                  v-if="hasCustomThumbnailCache"
+                  :icon="IconRestore"
+                  :buttonSize="'small'"
+                  :disabled="isChangingThumbnailCache || isChangingDbStorage"
+                  :tooltip="$t('settings.database.restore_default_location')"
+                  @click="prepareThumbnailMigration(null)"
+                />
+              </div>
+            </div>
+
+            <!-- cache quality -->
+            <div class="flex items-center justify-between gap-4 px-1 rounded-box hover:bg-base-100/10 transition-colors duration-200">
+              <div class="min-w-0 flex flex-col gap-0.5 text-sm leading-5">
+                <div>{{ $t('settings.advanced.thumbnail_cache.thumbnail_quality') }}</div>
+                <div class="text-xs text-base-content/30">{{ $t('settings.advanced.thumbnail_cache.thumbnail_quality_hint') }}</div>
               </div>
               <select class="select select-bordered select-sm min-w-40 shrink-0" :value="config.settings.thumbnailSize" @change="onThumbnailSizeChange">
                 <option v-for="option in thumbnailQualityOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
               </select>
             </div>
-            <div class="flex items-center justify-between gap-4 px-1 rounded-box hover:bg-base-100/10 transition-colors duration-200">
-              <div class="min-w-0 flex flex-col gap-0.5 text-sm leading-5">
-                <div>{{ $t('settings.advanced.raw_thumbnail_source') }}</div>
-                <div class="text-xs text-base-content/30">{{ $t('settings.advanced.raw_thumbnail_source_hint') }}</div>
+            <div class="flex items-center justify-between gap-4 px-1 rounded-box hover:bg-base-100/10">
+              <div class="min-w-0 text-sm leading-5">
+                <div>{{ $t(cleanupKey + '.title') }}</div>
+                <div class="text-xs text-base-content/30">{{ $t(cleanupKey + '.hint') }}</div>
               </div>
-              <select class="select select-bordered select-sm min-w-40 shrink-0" :value="config.settings.rawThumbnailSource" @change="onRawThumbnailSourceChange">
-                <option v-for="option in rawThumbnailSourceOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-              </select>
-            </div>
-          </div>
-
-          <!-- map -->
-          <div class="rounded-box p-2 space-y-2 bg-base-300/30 border border-base-content/5 shadow-sm">
-            <div class="flex items-center gap-2 text-base-content/30">
-              <span class="font-bold uppercase text-[10px] tracking-widest">{{ $t('settings.advanced.section_map') }}</span>
-            </div>
-            <div class="flex items-center justify-between gap-4 px-1 rounded-box hover:bg-base-100/10 transition-colors duration-200">
-              <div class="min-w-0 flex flex-col gap-0.5 text-sm leading-5">
-                <div>{{ $t('settings.advanced.map_provider') }}</div>
-                <div class="text-xs text-base-content/30">{{ $t('settings.advanced.map_provider_hint') }}</div>
-              </div>
-              <select class="select select-bordered select-sm min-w-40 shrink-0" v-model="config.settings.mapProvider">
-                <option v-for="option in mapProviderOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-              </select>
-            </div>
-            <div v-if="config.settings.mapProvider === 'tianditu'" class="flex items-center justify-between gap-4 px-1 rounded-box hover:bg-base-100/10 transition-colors duration-200">
-              <div class="min-w-0 flex flex-col gap-0.5 text-sm leading-5">
-                <div>{{ $t('settings.advanced.tianditu_token') }}</div>
-                <div class="text-xs text-base-content/30">{{ $t('settings.advanced.tianditu_token_hint') }}</div>
-              </div>
-              <div class="flex shrink-0 items-center gap-2">
-                <div class="relative">
-                  <input
-                    v-model="tiandituTokenInput"
-                    class="input input-bordered input-sm min-w-40 w-48"
-                    type="text"
-                    spellcheck="false"
-                    autocomplete="off"
-                    :placeholder="$t('settings.advanced.tianditu_token_placeholder')"
-                    @input="onTiandituTokenInput"
-                    @keydown.enter.prevent="commitTiandituToken"
-                    @blur="commitTiandituToken"
-                  >
-                </div>
-                <span
-                  v-if="tiandituTokenStatus !== 'idle'"
-                  class="min-w-20 text-xs whitespace-nowrap"
-                  :class="tiandituTokenStatusClass"
-                >
-                  {{ tiandituTokenStatusLabel }}
-                </span>
-              </div>
+              <button
+                class="btn btn-sm btn-ghost rounded-box bg-base-100 border border-base-content/30 shrink-0"
+                :disabled="!cleanupLibraryCount || cleanupOpen || isChangingThumbnailCache || isChangingDbStorage"
+                @click="cleanThumbnailCache"
+              >
+                {{ $t(cleanupKey + '.button') }}
+              </button>
             </div>
           </div>
 
@@ -549,7 +546,7 @@
               <div class="shrink-0 flex items-center gap-2">
                 <button
                   class="btn btn-sm btn-ghost rounded-box bg-base-100 border border-base-content/30 text-base-content/70 hover:text-base-content"
-                  :disabled="isChangingDbStorage"
+                  :disabled="isChangingDbStorage || isChangingThumbnailCache"
                   @click="selectDbStorageDir"
                 >
                   {{ isChangingDbStorage ? $t('tooltip.loading') : $t('settings.database.change_location') }}
@@ -558,7 +555,7 @@
                   v-if="hasCustomDbStorage"
                   :icon="IconRestore"
                   :buttonSize="'small'"
-                  :disabled="isChangingDbStorage"
+                  :disabled="isChangingDbStorage || isChangingThumbnailCache"
                   :tooltip="$t('settings.database.restore_default_location')"
                   @click="restoreDefaultDbStorageDir"
                 />
@@ -592,8 +589,52 @@
             </div>
           </div>
 
-          <!-- diagnostics -->
+          <!-- map -->
           <div class="rounded-box p-2 space-y-2 bg-base-300/30 border border-base-content/5 shadow-sm">
+            <div class="flex items-center gap-2 text-base-content/30">
+              <span class="font-bold uppercase text-[10px] tracking-widest">{{ $t('settings.advanced.map.section_map') }}</span>
+            </div>
+            <div class="flex items-center justify-between gap-4 px-1 rounded-box hover:bg-base-100/10 transition-colors duration-200">
+              <div class="min-w-0 flex flex-col gap-0.5 text-sm leading-5">
+                <div>{{ $t('settings.advanced.map.map_provider') }}</div>
+                <div class="text-xs text-base-content/30">{{ $t('settings.advanced.map.map_provider_hint') }}</div>
+              </div>
+              <select class="select select-bordered select-sm min-w-40 shrink-0" v-model="config.settings.mapProvider">
+                <option v-for="option in mapProviderOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+              </select>
+            </div>
+            <div v-if="config.settings.mapProvider === 'tianditu'" class="flex items-center justify-between gap-4 px-1 rounded-box hover:bg-base-100/10 transition-colors duration-200">
+              <div class="min-w-0 flex flex-col gap-0.5 text-sm leading-5">
+                <div>{{ $t('settings.advanced.map.tianditu_token') }}</div>
+                <div class="text-xs text-base-content/30">{{ $t('settings.advanced.map.tianditu_token_hint') }}</div>
+              </div>
+              <div class="flex shrink-0 items-center gap-2">
+                <div class="relative">
+                  <input
+                    v-model="tiandituTokenInput"
+                    class="input input-bordered input-sm min-w-40 w-48"
+                    type="text"
+                    spellcheck="false"
+                    autocomplete="off"
+                    :placeholder="$t('settings.advanced.map.tianditu_token_placeholder')"
+                    @input="onTiandituTokenInput"
+                    @keydown.enter.prevent="commitTiandituToken"
+                    @blur="commitTiandituToken"
+                  >
+                </div>
+                <span
+                  v-if="tiandituTokenStatus !== 'idle'"
+                  class="min-w-20 text-xs whitespace-nowrap"
+                  :class="tiandituTokenStatusClass"
+                >
+                  {{ tiandituTokenStatusLabel }}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <!-- diagnostics -->
+          <!-- <div class="rounded-box p-2 space-y-2 bg-base-300/30 border border-base-content/5 shadow-sm">
             <div class="flex items-center gap-2 text-base-content/30">
               <span class="font-bold uppercase text-[10px] tracking-widest">{{ $t('settings.advanced.section_diagnostics') }}</span>
             </div>
@@ -603,11 +644,11 @@
               </div>
               <input type="checkbox" class="toggle toggle-primary toggle-sm" v-model="config.settings.debugMode" />
             </div>
-          </div>
+          </div> -->
         </div>
 
         <!-- Shortcuts Tab -->
-        <div v-else-if="config.settings.tabIndex === 6" class="flex flex-col space-y-2">
+        <div v-else-if="config.settings.tabIndex === SETTINGS_TAB.SHORTCUTS" class="@container flex flex-col space-y-2">
           <div
             v-for="section in shortcutSections"
             :key="section.key"
@@ -616,33 +657,106 @@
             <div class="flex items-center gap-2 text-base-content/30">
               <span class="font-bold uppercase text-[10px] tracking-widest">{{ section.title }}</span>
             </div>
-            <div class="grid grid-cols-1 lg:grid-cols-2 gap-x-4 gap-y-1">
+            <div class="sr-only" role="list">
+              <div v-for="item in section.items" :key="item.actionId" role="listitem">
+                <div v-for="(row, rowIndex) in item.rows" :key="rowIndex">
+                  {{ row.label }}: {{ row.keys.join(' ') }}
+                </div>
+              </div>
+            </div>
+            <div class="flex flex-col @[36rem]:flex-row @[36rem]:gap-4" aria-hidden="true">
               <div
-                v-for="item in section.items"
-                :key="item.actionId"
-                class="min-h-9 flex items-center justify-between gap-4 px-1 rounded-box hover:bg-base-100/10 transition-colors duration-200"
+                v-for="(column, columnIndex) in section.columns"
+                :key="columnIndex"
+                class="contents @[36rem]:block @[36rem]:flex-1 @[36rem]:min-w-0"
               >
-                <div class="min-w-0 text-sm leading-5 truncate">{{ item.label }}</div>
-                <div class="shrink-0 flex items-center gap-1">
-                  <span
-                    v-for="(key, keyIndex) in item.keys"
-                    :key="`${item.actionId}-${keyIndex}-${key}`"
-                    class="min-w-7 h-7 px-2 inline-flex items-center justify-center rounded-box border border-base-content/10 bg-base-100/40 text-xs font-semibold text-base-content/30 shadow-sm"
+                <div
+                  v-for="item in column"
+                  :key="item.actionId"
+                  :style="{ order: item.order }"
+                  class="mb-1"
+                >
+                  <div
+                    v-for="(row, rowIndex) in item.rows"
+                    :key="rowIndex"
+                    class="min-h-9 flex items-center justify-between gap-4 px-1 py-1 rounded-box hover:bg-base-100/10 transition-colors duration-200"
                   >
-                    {{ key }}
-                  </span>
+                    <div class="min-w-0 text-sm leading-5">{{ row.label }}</div>
+                    <div class="shrink-0 flex items-center gap-1">
+                      <span
+                        v-for="(key, keyIndex) in row.keys"
+                        :key="keyIndex"
+                        class="min-w-7 h-7 px-2 inline-flex items-center justify-center rounded-box border border-base-content/10 bg-base-100/40 text-xs font-semibold text-base-content/30 shadow-sm"
+                      >
+                        {{ key }}
+                      </span>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
         </div>
         <!-- About Tab -->
-        <div v-else-if="config.settings.tabIndex === 7" class="py-2">
+        <div v-else-if="config.settings.tabIndex === SETTINGS_TAB.ABOUT" class="py-2">
             <SettingsAbout />
         </div>
 
       </div>
     </div>
+
+    <StatusBarFieldsDialog v-if="showStatusBarFieldsDialog" @cancel="showStatusBarFieldsDialog = false" />
+    <ModalDialog v-if="cleanupOpen" :title="$t(cleanupKey + '.title')" :width="440" hide-close>
+      <div class="space-y-2 text-sm" role="status">
+        <template v-if="cleanupRunning">
+          <p class="break-words">{{ cleanupTotal
+            ? $t(cleanupKey + '.progress', { current: cleanupCompleted + 1, total: cleanupTotal, name: cleanupLibraryName })
+            : $t('tooltip.loading') }}</p>
+          <progress class="progress progress-primary w-full" :value="cleanupCompleted" :max="Math.max(cleanupTotal, 1)" :aria-label="$t(cleanupKey + '.title')"></progress>
+        </template>
+        <template v-else>
+          <p v-if="cleanupListError" class="text-error">{{ $t(cleanupKey + '.list_error') }}</p>
+          <p v-else-if="cleanupFiles">{{ $t(cleanupKey + '.freed', { size: formatFileSize(cleanupBytes) }) }}</p>
+          <p v-else-if="!cleanupFailures.length">{{ $t(cleanupKey + '.empty') }}</p>
+          <template v-if="cleanupFailures.length">
+            <p class="text-error">{{ $t(cleanupKey + '.failed') }}</p>
+            <ul class="max-h-32 overflow-y-auto list-disc pl-5 break-words">
+              <li v-for="failure in cleanupFailures" :key="failure.id">{{ failure.name }} — {{ failure.error }}</li>
+            </ul>
+          </template>
+        </template>
+      </div>
+      <div v-if="!cleanupRunning" class="mt-4 flex justify-end">
+        <button class="t-button-default" @click="cleanupOpen = false">{{ $t('msgbox.close') }}</button>
+      </div>
+    </ModalDialog>
+
+    <ModalDialog
+      v-if="showThumbnailMigrationDialog"
+      :title="$t('settings.advanced.thumbnail_cache.current_location')"
+      :width="480"
+      @cancel="cancelThumbnailMigration"
+    >
+      <div class="space-y-3">
+        <p class="text-xs text-base-content/60">{{ $t('settings.advanced.thumbnail_cache.migration_hint') }}</p>
+        <div class="text-xs text-base-content/75 break-all">{{ $t('settings.advanced.thumbnail_cache.new_location', { path: pendingThumbnailCacheDir === null ? $t('settings.database.system_default') : `${pendingThumbnailCacheDir}/lap-thumbnail-cache` }) }}</div>
+        <section class="rounded-box p-2 space-y-2 bg-base-300/30 border border-base-content/5 shadow-sm">
+          <div class="font-bold uppercase text-[10px] tracking-widest text-base-content/30">{{ $t('settings.advanced.thumbnail_cache.migration_progress') }}</div>
+          <div class="space-y-2 px-1 text-xs" role="status" aria-live="polite">
+            <div class="flex items-center justify-between gap-2 text-base-content/75">
+              <span>{{ thumbnailMigrationStatusText }}</span>
+              <span v-if="thumbnailMigrationPreview === 'ready' && thumbnailCacheProgress.phase !== 'rolling_back'" class="tabular-nums shrink-0">{{ formatMigrationCount(thumbnailCacheProgress.completed) }} / {{ formatMigrationCount(thumbnailCacheProgress.total) }}</span>
+            </div>
+            <progress class="progress progress-primary w-full" :value="thumbnailCacheProgress.completed" :max="Math.max(thumbnailCacheProgress.total, 1)" :aria-label="$t('settings.advanced.thumbnail_cache.migration_progress')"></progress>
+            <p v-if="thumbnailMigrationError" class="text-error/70 break-words" role="alert">{{ thumbnailMigrationError }}</p>
+          </div>
+        </section>
+      </div>
+      <div class="mt-4 flex justify-end gap-4">
+        <button class="t-button-default" :disabled="thumbnailMigrationCancelling" @click="cancelThumbnailMigration">{{ $t(thumbnailMigrationCancelled ? 'msgbox.close' : 'msgbox.cancel') }}</button>
+        <button class="t-button-primary" :disabled="isChangingThumbnailCache || thumbnailMigrationPreview === 'counting' || thumbnailMigrationPreview === 'error'" @click="moveThumbnailCache(pendingThumbnailCacheDir)">{{ $t('settings.advanced.thumbnail_cache.start') }}</button>
+      </div>
+    </ModalDialog>
 
     <MessageBox
       v-if="showChangeDbStorageDialog"
@@ -688,8 +802,14 @@ import { ask, open as openDialog } from '@tauri-apps/plugin-dialog';
 import { useI18n } from 'vue-i18n';
 import { config, libConfig } from '@/common/config';
 import { normalizeThumbnailSize } from '@/common/thumbnailProfiles';
-import { THUMBNAIL_BADGE, MAP_MARKER_SIZES } from '@/common/constants';
+import { THUMBNAIL_BADGE, MAP_MARKER_SIZES, SETTINGS_TAB, SETTINGS_BASE_WIDTH, SETTINGS_BASE_HEIGHT } from '@/common/constants';
 import {
+  getAppConfig,
+  cleanUnusedThumbnailCache,
+  getThumbnailCacheLocation,
+  getThumbnailCacheMigrationCount,
+  changeThumbnailCacheLocation,
+  cancelThumbnailCacheMigration,
   getDbStorageDir,
   changeDbStorageDir,
   resetDbStorageDir,
@@ -701,14 +821,18 @@ import {
   cancelMultilingualImageSearchModelDownload,
   listenImageSearchModelDownloadProgress,
 } from '@/common/api';
-import { formatFileSize, isLinux, isMac, setTheme, SCALE_VALUES } from '@/common/utils';
+import { formatFileSize, isLinux, isMac, SCALE_VALUES } from '@/common/utils';
+import { useAppearance } from '@/composables/useAppearance';
 import { getShortcutLabels, ShortcutActionId, ShortcutPlatform } from '@/common/shortcuts';
 import { useToast } from '@/common/toast';
 import { IconClose, IconRestore } from '@/common/icons';
 
 import TitleBar from '@/components/TitleBar.vue';
 import SettingsAbout from '@/components/SettingsAbout.vue';
+import SettingsMetadata from '@/components/SettingsMetadata.vue';
 import MessageBox from '@/components/MessageBox.vue';
+import StatusBarFieldsDialog from '@/components/StatusBarFieldsDialog.vue';
+import ModalDialog from '@/components/ModalDialog.vue';
 import BackupDialog from '@/components/BackupDialog.vue';
 import RestoreDialog from '@/components/RestoreDialog.vue';
 import TButton from '@/components/TButton.vue';
@@ -719,26 +843,105 @@ const localeMsg = computed(() => messages.value[config.settings.language] as any
 const toast = useToast();
 const shortcutPlatform: ShortcutPlatform = isMac ? 'mac' : (isLinux ? 'linux' : 'windows');
 const settingsTabs = [
-  'settings.general.title',
-  'settings.browse.title',
-  'settings.grid.title',
-  'settings.image_view.title',
-  'settings.image_search.title',
-  'settings.advanced.title',
-  'settings.shortcuts.title',
-  'settings.about.title',
+  { id: SETTINGS_TAB.GENERAL, label: 'settings.general.title' },
+  { id: SETTINGS_TAB.GRID, label: 'settings.grid.title' },
+  { id: SETTINGS_TAB.IMAGE_VIEW, label: 'settings.image_view.title' },
+  { id: SETTINGS_TAB.RAW, label: 'settings.raw.title' },
+  { id: SETTINGS_TAB.METADATA, label: 'settings.metadata.title' },
+  { id: SETTINGS_TAB.IMAGE_SEARCH, label: 'settings.image_search.title' },
+  { id: SETTINGS_TAB.ADVANCED, label: 'settings.advanced.title' },
+  { id: SETTINGS_TAB.SHORTCUTS, label: 'settings.shortcuts.title' },
+  { id: SETTINGS_TAB.ABOUT, label: 'settings.about.title' },
+];
+const rawPreviewFields = [
+  { key: 'rawPreviewSource', hint: 'preview_source_hint', options: ['embedded', 'rendered', 'brightened'] },
 ];
 
 const appWindow = getCurrentWebviewWindow()
 let unlistenCloseRequested: (() => void) | null = null;
-const SETTINGS_BASE_WIDTH = 600;
-const SETTINGS_BASE_HEIGHT = 620;
+
+const cleanupKey = 'settings.advanced.thumbnail_cache.cleanup';
+const cleanupLibraryCount = ref(0);
+const cleanupOpen = ref(false);
+const cleanupRunning = ref(false);
+const cleanupTotal = ref(0);
+const cleanupCompleted = ref(0);
+const cleanupLibraryName = ref('');
+const cleanupBytes = ref(0);
+const cleanupFiles = ref(0);
+const cleanupListError = ref(false);
+const cleanupFailures = ref<{ id: string; name: string; error: string }[]>([]);
+
+async function cleanThumbnailCache() {
+  if (cleanupOpen.value || !cleanupLibraryCount.value) return;
+  cleanupOpen.value = true;
+  cleanupRunning.value = true;
+  cleanupTotal.value = 0;
+  cleanupCompleted.value = 0;
+  cleanupBytes.value = 0;
+  cleanupFiles.value = 0;
+  cleanupFailures.value = [];
+  cleanupListError.value = false;
+  try {
+    const appConfig = await getAppConfig();
+    if (!appConfig) {
+      cleanupListError.value = true;
+      return;
+    }
+    const libraries = (appConfig.libraries ?? []).filter((library: { id: string }) => library.id);
+    cleanupLibraryCount.value = libraries.length;
+    cleanupTotal.value = libraries.length;
+    for (const { id, name } of libraries) {
+      cleanupLibraryName.value = name;
+      try {
+        const result = await cleanUnusedThumbnailCache(id) as { filesRemoved: number; bytesFreed: number };
+        cleanupFiles.value += result.filesRemoved;
+        cleanupBytes.value += result.bytesFreed;
+      } catch (error) {
+        cleanupFailures.value.push({ id, name, error: String(error) });
+      }
+      cleanupCompleted.value++;
+    }
+  } finally {
+    cleanupRunning.value = false;
+  }
+}
+
+const thumbnailCacheDir = ref('');
+const thumbnailCacheAvailable = ref(true);
+const hasCustomThumbnailCache = ref(false);
+const isChangingThumbnailCache = ref(false);
+const showThumbnailMigrationDialog = ref(false);
+const pendingThumbnailCacheDir = ref<string | null>(null);
+const thumbnailMigrationCancelling = ref(false);
+const thumbnailMigrationCancelled = ref(false);
+const thumbnailMigrationError = ref('');
+const thumbnailMigrationPreview = ref<'counting' | 'ready' | 'unavailable' | 'error'>('counting');
+let thumbnailMigrationPreviewRequest = 0;
+let thumbnailMigrationOperationId = '';
+const thumbnailCacheProgress = ref({ phase: 'counting', completed: 0, total: 0 });
+const migrationCountFormatter = computed(() => new Intl.NumberFormat(locale.value));
+const formatMigrationCount = (count: number) => migrationCountFormatter.value.format(count);
+const thumbnailMigrationStatusText = computed(() => {
+  if (thumbnailMigrationCancelled.value) return t('settings.advanced.thumbnail_cache.cancelled');
+  if (thumbnailCacheProgress.value.phase === 'rolling_back') return t('settings.advanced.thumbnail_cache.rolling_back');
+  if (thumbnailMigrationCancelling.value) return t('settings.advanced.thumbnail_cache.cancelling');
+  if (isChangingThumbnailCache.value) {
+    const phase = thumbnailCacheProgress.value.phase;
+    return t(`settings.advanced.thumbnail_cache.${phase === 'copying' ? 'migrating' : phase === 'finishing' ? 'finishing' : 'counting'}`);
+  }
+  if (thumbnailMigrationPreview.value === 'counting') return t('settings.advanced.thumbnail_cache.counting');
+  if (thumbnailMigrationPreview.value === 'unavailable') return t('settings.advanced.thumbnail_cache.unavailable');
+  if (thumbnailMigrationPreview.value === 'error') return '';
+  return t('settings.advanced.thumbnail_cache.ready');
+});
 const dbStorageDir = ref('');
 const isChangingDbStorage = ref(false);
 const hasCustomDbStorage = ref(false);
 const showChangeDbStorageDialog = ref(false);
 const showResetDbStorageDialog = ref(false);
 const showBackupDialog = ref(false);
+const showStatusBarFieldsDialog = ref(false);
 const showRestoreDialog = ref(false);
 const isDownloadingMultilingualModel = ref(false);
 const isCancelingMultilingualModelDownload = ref(false);
@@ -757,14 +960,20 @@ const onRestoreDone = () => {
 
 const languages = [
   { label: 'English', value: 'en' },
+  { label: 'Česky', value: 'cs' },
   { label: 'Deutsch', value: 'de' },
   { label: 'Español', value: 'es' },
   { label: 'Français', value: 'fr' },
-  { label: 'Português', value: 'pt' },
-  { label: 'Polski', value: 'pl' },
+  { label: 'Italiano', value: 'it' },
+  { label: 'Magyar', value: 'hu' },
   { label: 'Nederlands', value: 'nl' },
+  { label: 'Polski', value: 'pl' },
+  { label: 'Português', value: 'pt' },
   { label: 'Русский', value: 'ru' },
-  { label: '中文', value: 'zh' },
+  { label: 'Українська', value: 'uk' },
+  { label: 'Tiếng Việt', value: 'vi' },
+  { label: '中文简体', value: 'zh' },
+  { label: '中文繁體', value: 'zh-TW' },
   { label: '日本語', value: 'ja' },
   { label: '한국어', value: 'ko' },
 ];
@@ -777,9 +986,11 @@ const appearanceOptions = computed(() => {
   }));
 });
 
-// Define the theme options
+const appearance = useAppearance();
+
+// Show and edit the theme for the currently displayed appearance.
 const themeOptions = computed(() => {
-  const options = config.settings.appearance === 0 
+  const options = appearance.value === 0
     ? localeMsg.value.settings.general.theme_options_light 
     : localeMsg.value.settings.general.theme_options_dark;
 
@@ -792,10 +1003,10 @@ const themeOptions = computed(() => {
 
 const currentTheme = computed({
   get() {
-    return config.settings.appearance === 0 ? config.settings.lightTheme : config.settings.darkTheme;
+    return appearance.value === 0 ? config.settings.lightTheme : config.settings.darkTheme;
   },
   set(value) {
-    config.settings.appearance === 0 ? config.settings.lightTheme = value : config.settings.darkTheme = value;
+    appearance.value === 0 ? config.settings.lightTheme = value : config.settings.darkTheme = value;
   }
 });
 
@@ -808,37 +1019,9 @@ const scaleOptions = computed(() => {
   }));
 });
 
-const folderSortOptions = computed(() => {
-  const options = localeMsg.value.settings.browse.folder_sort_options || [];
-  const result = [];
-
-  for (let i = 0; i < options.length; i++) {
-    result.push({ label: options[i], value: i });
-  }
-
-  return result;
-});
-
-const calendarSortOptions = computed(() => {
-  const options = localeMsg.value.settings.browse.calendar_sort_options || [];
-  const result = [];
-
-  for (let i = 0; i < options.length; i++) {
-    result.push({ label: options[i], value: i });
-  }
-
-  return result;
-});
-
-const categorySortOptions = computed(() => {
-  const options = localeMsg.value.settings.browse.category_sort_options || [];
-  const result = [];
-
-  for (let i = 0; i < options.length; i++) {
-    result.push({ label: options[i], value: i });
-  }
-
-  return result;
+const dateTimeFormatOptions = computed(() => {
+  const options = localeMsg.value.settings.general.date_time_format_options || [];
+  return options.map((label: string, value: number) => ({ label, value }));
 });
 
 // Define the wheel options using computed to react to language changes
@@ -851,7 +1034,7 @@ const wheelOptions = computed(() => {
 });
 
 const thumbnailQualityOptions = computed(() => {
-  const labels = localeMsg.value.settings.advanced.thumbnail_quality_options || [
+  const labels = localeMsg.value.settings.advanced.thumbnail_cache.thumbnail_quality_options || [
     'Low(256px)',
     'Standard(512px)',
     'High(1024px)',
@@ -863,19 +1046,8 @@ const thumbnailQualityOptions = computed(() => {
   ];
 });
 
-const rawThumbnailSourceOptions = computed(() => {
-  const labels = localeMsg.value.settings.advanced.raw_thumbnail_source_options || [
-    'RAW Rendering (default)',
-    'Embedded preview (faster)',
-  ];
-  return [
-    { value: 'processed', label: labels[0] },
-    { value: 'embedded', label: labels[1] },
-  ];
-});
-
 const mapProviderOptions = computed(() => {
-  const labels = localeMsg.value.settings.advanced.map_provider_options || [
+  const labels = localeMsg.value.settings.advanced.map.map_provider_options || [
     'Global (default)',
     'China (Tianditu)',
   ];
@@ -887,8 +1059,8 @@ const mapProviderOptions = computed(() => {
 
 const tiandituTokenStatusLabel = computed(() => {
   const labels: Record<string, string> = {
-    saved: t('settings.advanced.tianditu_token_status_saved'),
-    empty: t('settings.advanced.tianditu_token_status_empty'),
+    saved: t('settings.advanced.map.tianditu_token_status_saved'),
+    empty: t('settings.advanced.map.tianditu_token_status_empty'),
   };
   return labels[tiandituTokenStatus.value] || '';
 });
@@ -924,12 +1096,6 @@ function onThumbnailSizeChange(event: Event) {
   const next = normalizeThumbnailSize((event.target as HTMLSelectElement).value);
   if (normalizeThumbnailSize(config.settings.thumbnailSize) === next) return;
   config.settings.thumbnailSize = next;
-}
-
-function onRawThumbnailSourceChange(event: Event) {
-  config.settings.rawThumbnailSource = (event.target as HTMLSelectElement).value === 'embedded'
-    ? 'embedded'
-    : 'processed';
 }
 
 // Define the grid scaling options
@@ -1109,6 +1275,7 @@ const faceClusterOptions = computed(() => {
 type ShortcutDisplayItem = {
   actionId: ShortcutActionId;
   labelKey: string;
+  advanceLabelKey?: string;
   keys?: string[];
   backgroundValue?: number;
 };
@@ -1142,6 +1309,7 @@ const shortcutDisplaySections: Array<{ key: string; items: ShortcutDisplayItem[]
       { actionId: 'file.openExternalApp', labelKey: 'open_external_app' },
       { actionId: 'file.editImage', labelKey: 'edit_image' },
       { actionId: 'file.searchSimilar', labelKey: 'search_similar' },
+      { actionId: 'meta.info', labelKey: 'show_info' },
     ],
   },
   {
@@ -1150,14 +1318,13 @@ const shortcutDisplaySections: Array<{ key: string; items: ShortcutDisplayItem[]
       { actionId: 'view.zoomIn', labelKey: 'zoom_in' },
       { actionId: 'view.zoomOut', labelKey: 'zoom_out' },
       { actionId: 'view.zoomFit', labelKey: 'zoom_fit' },
+      { actionId: 'meta.rotate', labelKey: 'rotate' },
+      { actionId: 'meta.rotateCounterclockwise', labelKey: 'rotate_counterclockwise' },
+      { actionId: 'view.toggleAfAreas', labelKey: 'toggle_af_areas' },
+      { actionId: 'view.togglePlayback', labelKey: 'toggle_playback' },
       { actionId: 'view.cycleBackground', labelKey: 'cycle_background' },
-      { actionId: 'view.backgroundTheme', labelKey: 'cycle_background', backgroundValue: 0 },
-      { actionId: 'view.backgroundBlack', labelKey: 'cycle_background', backgroundValue: 1 },
-      { actionId: 'view.backgroundDarkGray', labelKey: 'cycle_background', backgroundValue: 2 },
-      { actionId: 'view.backgroundMediumGray', labelKey: 'cycle_background', backgroundValue: 3 },
-      { actionId: 'view.backgroundLightGray', labelKey: 'cycle_background', backgroundValue: 4 },
-      { actionId: 'view.backgroundWhite', labelKey: 'cycle_background', backgroundValue: 5 },
-      { actionId: 'slideshow.toggle', labelKey: 'toggle_slideshow' },
+      { actionId: 'view.cycleRawPreview', labelKey: 'cycle_raw_preview' },
+      { actionId: 'view.toggleFullscreen', labelKey: 'fullscreen' },
     ],
   },
   {
@@ -1166,11 +1333,12 @@ const shortcutDisplaySections: Array<{ key: string; items: ShortcutDisplayItem[]
 
       { actionId: 'file.rename', labelKey: 'rename_file' },
       { actionId: 'file.moveTo', labelKey: 'move_within_library' },
-      { actionId: 'file.moveToFolder', labelKey: 'move_to_folder' },
       { actionId: 'file.copy', labelKey: 'copy_file' },
+      { actionId: 'file.copyPath', labelKey: 'copy_file_path' },
       { actionId: 'file.paste', labelKey: 'paste_file' },
       { actionId: 'file.reveal', labelKey: 'reveal_in_file_manager' },
       { actionId: 'file.trash', labelKey: 'move_to_trash' },
+      { actionId: 'file.deletePermanently', labelKey: 'delete_permanently' },
     ],
   },
   {
@@ -1184,36 +1352,51 @@ const shortcutDisplaySections: Array<{ key: string; items: ShortcutDisplayItem[]
   {
     key: 'metadata',
     items: [
-      { actionId: 'meta.favorite', labelKey: 'toggle_favorite' },
-      { actionId: 'meta.rating.clear', labelKey: 'set_clear_rating', keys: ['0 ~ 5'] },
-      { actionId: 'meta.culling.pick', labelKey: 'mark_pick' },
-      { actionId: 'meta.culling.reject', labelKey: 'mark_rejected' },
-      { actionId: 'meta.culling.unreviewed', labelKey: 'mark_unreviewed' },
+      { actionId: 'meta.favorite', labelKey: 'toggle_favorite', advanceLabelKey: 'toggle_favorite_and_next' },
+      { actionId: 'meta.rating.clear', labelKey: 'set_clear_rating', advanceLabelKey: 'set_clear_rating_and_next', keys: ['0 ~ 5'] },
+      { actionId: 'meta.culling.pick', labelKey: 'mark_pick', advanceLabelKey: 'mark_pick_and_next' },
+      { actionId: 'meta.culling.reject', labelKey: 'mark_rejected', advanceLabelKey: 'mark_rejected_and_next' },
+      { actionId: 'meta.culling.unreviewed', labelKey: 'mark_unreviewed', advanceLabelKey: 'mark_unreviewed_and_next' },
       { actionId: 'meta.tag', labelKey: 'edit_tags' },
       { actionId: 'meta.collection', labelKey: 'edit_collections' },
-      { actionId: 'meta.comment', labelKey: 'edit_comment' },
-      { actionId: 'meta.rotate', labelKey: 'rotate' },
-      { actionId: 'meta.rotateCounterclockwise', labelKey: 'rotate_counterclockwise' },
-      { actionId: 'meta.info', labelKey: 'show_info' },
+      { actionId: 'meta.edit', labelKey: 'edit_metadata' },
     ],
   },
 ];
 
 const shortcutSections = computed(() => {
   const shortcutMessages = localeMsg.value.settings.shortcuts;
-  return shortcutDisplaySections.map((section) => ({
-    key: section.key,
-    title: shortcutMessages.sections[section.key],
-    items: section.items
-      .map((item) => ({
-        actionId: item.actionId,
-        label: item.backgroundValue === undefined
-          ? shortcutMessages.actions[getShortcutActionLabelKey(item)]
-          : `${localeMsg.value.settings.image_view.view_background}: ${localeMsg.value.settings.image_view.view_background_options[item.backgroundValue]}`,
-        keys: item.keys ?? getDisplayShortcutKeys(item.actionId),
-      }))
-      .filter((item) => item.keys.length > 0),
-  }));
+  const translatedActionLabels: Partial<Record<ShortcutActionId, string>> = {
+    'meta.edit': localeMsg.value.file_info.edit_metadata,
+    'view.toggleFullscreen': localeMsg.value.image_viewer.toolbar.fullscreen,
+  };
+  return shortcutDisplaySections.map((section) => {
+    const items = section.items
+      .map((item, order) => {
+        const keys = item.keys ?? getDisplayShortcutKeys(item.actionId);
+        const label = item.backgroundValue === undefined
+          ? translatedActionLabels[item.actionId] ?? shortcutMessages.actions[getShortcutActionLabelKey(item)]
+          : `${localeMsg.value.settings.image_view.view_background}: ${localeMsg.value.settings.image_view.view_background_options[item.backgroundValue]}`;
+        const rows = [{ label, keys }];
+        if (item.advanceLabelKey) {
+          rows.push({
+            label: shortcutMessages.actions[item.advanceLabelKey],
+            keys: [shortcutPlatform === 'mac' ? '⇧' : 'Shift', ...keys],
+          });
+        }
+        return { actionId: item.actionId, rows, order };
+      })
+      .filter((item) => item.rows[0].keys.length > 0);
+    return {
+      key: section.key,
+      title: shortcutMessages.sections[section.key],
+      items,
+      columns: [
+        items.filter((_, index) => index % 2 === 0),
+        items.filter((_, index) => index % 2 === 1),
+      ],
+    };
+  });
 });
 
 function getShortcutActionLabelKey(item: ShortcutDisplayItem): string {
@@ -1384,8 +1567,8 @@ const cancelMultilingualModelDownload = async () => {
 
 onMounted(async () => {
   window.addEventListener('keydown', handleKeyDown);
-  if (typeof config.settings.tabIndex !== 'number' || config.settings.tabIndex < 0 || config.settings.tabIndex > 7) {
-    config.settings.tabIndex = 0;
+  if (!settingsTabs.some(tab => tab.id === config.settings.tabIndex)) {
+    config.settings.tabIndex = SETTINGS_TAB.GENERAL;
   }
   if (typeof config.settings.imageSearch.model !== 'number') {
     config.settings.imageSearch.model = 0;
@@ -1400,8 +1583,18 @@ onMounted(async () => {
   applyWindowScale(Number(config.settings.scale || 1));
   dbStorageDir.value = (await getDbStorageDir()) || '';
   hasCustomDbStorage.value = await isUsingCustomDbStorage();
+  try {
+    const cacheLocation = await getThumbnailCacheLocation() as any;
+    thumbnailCacheDir.value = cacheLocation.path;
+    hasCustomThumbnailCache.value = cacheLocation.custom;
+    thumbnailCacheAvailable.value = cacheLocation.available !== false;
+  } catch (error) {
+    toast.error(String(error));
+  }
 
   
+  cleanupLibraryCount.value = (await getAppConfig())?.libraries?.length ?? 0;
+
   // Show window after mount
   await appWindow.show();
 
@@ -1410,6 +1603,11 @@ onMounted(async () => {
   // closed transparent window can fail silently on Windows.
   unlistenCloseRequested = await appWindow.onCloseRequested(async (event) => {
     event.preventDefault();
+    if (cleanupRunning.value) return;
+    if (isChangingThumbnailCache.value) {
+      toast.error(t('settings.advanced.thumbnail_cache.busy'));
+      return;
+    }
     await appWindow.destroy();
   });
 });
@@ -1435,15 +1633,12 @@ watch(() => config.settings.tabIndex, (newValue) => {
   emit('settings-settingsTabIndex-changed', newValue);
 });
 watch(() => config.settings.appearance, (newValue) => {
-  setTheme(newValue, newValue === 0 ? config.settings.lightTheme : config.settings.darkTheme);
   emit('settings-appearance-changed', newValue);
 });
 watch(() => config.settings.lightTheme, (newValue) => {
-  setTheme(config.settings.appearance, newValue);
   emit('settings-lightTheme-changed', newValue);
 });
 watch(() => config.settings.darkTheme, (newValue) => {
-  setTheme(config.settings.appearance, newValue);
   emit('settings-darkTheme-changed', newValue);
 });
 watch(() => config.settings.scale, (newValue) => {
@@ -1451,10 +1646,14 @@ watch(() => config.settings.scale, (newValue) => {
   updateSettingsWindowSize(Number(newValue || 1));
   emit('settings-scale-changed', newValue);
 });
-watch(() => config.settings.language, (newValue) => {
-  locale.value = newValue;
-  emit('settings-language-changed', newValue);
-}, { immediate: true });
+function changeLanguage(language: string) {
+  // Notify main immediately; waiting for the locale bundle would lose startup races.
+  void emit('settings-language-changed', language);
+  void config.setLanguage(language, { fromUser: true });
+}
+watch(() => config.settings.fileDeleteBehavior, (behavior) => {
+  void emit('settings-fileDeleteBehavior-changed', behavior);
+});
 watch(() => config.settings.showToolTip, (newValue) => {
   emit('settings-showToolTip-changed', newValue);
 });
@@ -1470,29 +1669,26 @@ watch(() => config.settings.autoCheckUpdates, (newValue) => {
 watch(() => config.settings.debugMode, (newValue) => {
   emit('settings-debugMode-changed', newValue);
 });
-watch(() => config.settings.folderSort, (newValue) => {
-  emit('settings-folderSort-changed', newValue);
-});
-watch(() => config.settings.calendarSort, (newValue) => {
-  emit('settings-calendarSort-changed', newValue);
-});
-watch(() => config.settings.categorySort, (newValue) => {
-  emit('settings-categorySort-changed', newValue);
-});
-watch(() => config.settings.showSubfolderFiles, (newValue) => {
-  emit('settings-showSubfolderFiles-changed', newValue);
+watch(() => config.settings.dateTimeFormat, (newValue) => {
+  emit('settings-dateTimeFormat-changed', newValue);
 });
 watch(() => config.settings.groupRawJpegPairs, (newValue) => {
   emit('settings-groupRawJpegPairs-changed', newValue);
+});
+
+
+watch(() => config.settings.rawPairDisplaySource, (newValue) => {
+  emit('settings-rawPairDisplaySource-changed', newValue);
+});
+watch(() => config.settings.rawPreviewSource, (newValue) => {
+  emit('settings-rawPreviewSource-changed', newValue);
 });
 
 // grid view settings
 watch(() => config.settings.thumbnailSize, (newValue) => {
   emit('settings-thumbnailSize-changed', newValue);
 });
-watch(() => config.settings.rawThumbnailSource, (newValue) => {
-  emit('settings-rawThumbnailSource-changed', newValue);
-});
+
 watch(() => config.settings.mapProvider, (newValue) => {
   emit('settings-mapProvider-changed', newValue);
 });
@@ -1533,6 +1729,9 @@ watch(() => config.settings.navigatorViewMode, (newValue) => {
 watch(() => config.settings.navigatorViewSize, (newValue) => {
   emit('settings-navigatorViewSize-changed', newValue);
 });
+watch(() => config.settings.navigatorSharpnessGrid, (newValue) => {
+  emit('settings-navigatorSharpnessGrid-changed', newValue);
+});
 watch(() => config.settings.viewBackground, (newValue) => {
   emit('settings-viewBackground-changed', newValue);
 });
@@ -1567,19 +1766,31 @@ watch(() => config.settings.face.clusterThresholdIndex, (newValue) => {
 
 // Handle keyboard shortcuts
 function handleKeyDown(event: KeyboardEvent) {
+  if (showStatusBarFieldsDialog.value) return;
+  if (cleanupOpen.value) {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      if (!cleanupRunning.value) cleanupOpen.value = false;
+    }
+    if (event.key === 'Tab' && cleanupRunning.value) event.preventDefault();
+    return;
+  }
   const navigationKeys = ['Tab', 'Escape'];
-  
+
   // Disable default behavior for certain keys
   if (navigationKeys.includes(event.key)) {
     event.preventDefault();
   }
 
   switch (event.key) {
-    case 'Tab':
-      config.settings.tabIndex += 1;
-      config.settings.tabIndex = config.settings.tabIndex % settingsTabs.length;
+    case 'Tab': {
+      const current = settingsTabs.findIndex(tab => tab.id === config.settings.tabIndex);
+      config.settings.tabIndex = settingsTabs[(current + 1) % settingsTabs.length].id;
       break;
+    }
     case 'Escape':
+      if (showThumbnailMigrationDialog.value) { void cancelThumbnailMigration(); return; }
+      if (isChangingThumbnailCache.value) return;
       // Close the topmost dialog first
       if (showBackupDialog.value) { showBackupDialog.value = false; return; }
       if (showRestoreDialog.value) { showRestoreDialog.value = false; return; }
@@ -1587,6 +1798,120 @@ function handleKeyDown(event: KeyboardEvent) {
       if (showResetDbStorageDialog.value) { showResetDbStorageDialog.value = false; return; }
       appWindow.close(); // Close the window
       break;
+  }
+}
+
+async function chooseThumbnailCacheDir() {
+  try {
+    const result = await openDialog({
+      title: t('settings.advanced.thumbnail_cache.current_location'),
+      multiple: false,
+      directory: true,
+    });
+    if (typeof result === 'string') prepareThumbnailMigration(result);
+  } catch (error) {
+    toast.error(String(error));
+  }
+}
+
+async function prepareThumbnailMigration(newDir: string | null) {
+  const request = ++thumbnailMigrationPreviewRequest;
+  pendingThumbnailCacheDir.value = newDir;
+  thumbnailCacheProgress.value = { phase: 'counting', completed: 0, total: 0 };
+  thumbnailMigrationError.value = '';
+  thumbnailMigrationCancelling.value = false;
+  thumbnailMigrationCancelled.value = false;
+  thumbnailMigrationPreview.value = 'counting';
+  showThumbnailMigrationDialog.value = true;
+  try {
+    const total = await getThumbnailCacheMigrationCount();
+    if (request !== thumbnailMigrationPreviewRequest || !showThumbnailMigrationDialog.value) return;
+    thumbnailCacheProgress.value = { phase: 'counting', completed: 0, total };
+    thumbnailMigrationPreview.value = 'ready';
+  } catch (error: any) {
+    if (request !== thumbnailMigrationPreviewRequest || !showThumbnailMigrationDialog.value) return;
+    thumbnailMigrationPreview.value = error?.code === 'SOURCE_UNAVAILABLE' ? 'unavailable' : 'error';
+    if (thumbnailMigrationPreview.value === 'error') thumbnailMigrationError.value = error?.message || String(error);
+  }
+}
+
+async function cancelThumbnailMigration() {
+  if (!isChangingThumbnailCache.value) {
+    showThumbnailMigrationDialog.value = false;
+    return;
+  }
+  if (thumbnailMigrationCancelling.value) return;
+  thumbnailMigrationCancelling.value = true;
+  const operationId = thumbnailMigrationOperationId;
+  try {
+    // A click can arrive before the start command is registered in the backend.
+    // Retry only this operation; a late cancellation must never affect a retry.
+    while (isChangingThumbnailCache.value && thumbnailMigrationOperationId === operationId) {
+      if (await cancelThumbnailCacheMigration(operationId)) return;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+  } catch (error: any) {
+    if (thumbnailMigrationOperationId === operationId) {
+      thumbnailMigrationCancelling.value = false;
+      thumbnailMigrationError.value = error?.message || String(error);
+    }
+  }
+}
+
+async function moveThumbnailCache(newDir: string | null) {
+  if (isChangingThumbnailCache.value || isChangingDbStorage.value || thumbnailMigrationPreview.value === 'counting' || thumbnailMigrationPreview.value === 'error') return;
+  isChangingThumbnailCache.value = true;
+  thumbnailMigrationOperationId = crypto.randomUUID();
+  thumbnailMigrationCancelling.value = false;
+  thumbnailMigrationCancelled.value = false;
+  thumbnailMigrationError.value = '';
+  thumbnailCacheProgress.value = { phase: 'counting', completed: 0, total: thumbnailCacheProgress.value.total };
+  try {
+    const onProgress = (progress: any) => {
+      // Keep the preview total visible while the backend verifies the current files.
+      thumbnailCacheProgress.value = progress.phase === 'counting'
+        ? { ...progress, total: thumbnailCacheProgress.value.total }
+        : progress;
+      if (progress.phase !== 'counting') thumbnailMigrationPreview.value = 'ready';
+    };
+    const move = (allowMissingSource = false) =>
+      changeThumbnailCacheLocation(newDir, onProgress, allowMissingSource, thumbnailMigrationOperationId);
+    let result: any;
+    try {
+      result = await move();
+    } catch (error: any) {
+      if (error?.code !== 'SOURCE_UNAVAILABLE') throw error;
+      if (thumbnailMigrationCancelling.value) { showThumbnailMigrationDialog.value = false; return; }
+      thumbnailCacheAvailable.value = false;
+      const confirmed = await ask(t('settings.advanced.thumbnail_cache.rebuild_message'), {
+        title: t('settings.advanced.thumbnail_cache.current_location'),
+        kind: 'warning',
+        okLabel: t('settings.advanced.thumbnail_cache.rebuild_confirm'),
+        cancelLabel: t('msgbox.cancel'),
+      });
+      if (!confirmed || thumbnailMigrationCancelling.value) return;
+      result = await move(true);
+    }
+    thumbnailCacheDir.value = result.path;
+    thumbnailCacheAvailable.value = true;
+    hasCustomThumbnailCache.value = result.custom;
+    showThumbnailMigrationDialog.value = false;
+    if (result.cleanupWarnings?.length) {
+      toast.warning(`${t('settings.advanced.thumbnail_cache.cleanup_warning')}\n${result.cleanupWarnings.join('\n')}`, { duration: 10000 });
+    } else {
+      toast.success(t('settings.advanced.thumbnail_cache.success'));
+    }
+  } catch (error: any) {
+    if (error?.code === 'CANCELLED') {
+      thumbnailMigrationCancelled.value = true;
+      thumbnailCacheProgress.value = { ...thumbnailCacheProgress.value, completed: 0 };
+    } else {
+      thumbnailMigrationError.value = error?.message || String(error);
+    }
+  } finally {
+    isChangingThumbnailCache.value = false;
+    thumbnailMigrationCancelling.value = false;
+    thumbnailMigrationOperationId = '';
   }
 }
 
@@ -1619,9 +1944,13 @@ async function chooseDbStorageDir() {
   try {
     isChangingDbStorage.value = true;
     const newPath = await changeDbStorageDir(result);
-    dbStorageDir.value = String(newPath || result);
+    dbStorageDir.value = String(newPath.path || result);
     hasCustomDbStorage.value = true;
-    toast.success(localeMsg.value.settings?.database?.change_success || 'Library data has been moved successfully');
+    if (newPath.cleanupWarnings?.length) {
+      toast.warning(`${localeMsg.value.settings?.database?.cleanup_warning || 'Library data was moved, but some old files could not be removed:'}\n${newPath.cleanupWarnings.join('\n')}`, { duration: 10000 });
+    } else {
+      toast.success(localeMsg.value.settings?.database?.change_success || 'Library data has been moved successfully');
+    }
   } catch (error: any) {
     toast.error(error?.message || String(error));
   } finally {
@@ -1650,9 +1979,13 @@ async function confirmResetDbStorageDir() {
   try {
     isChangingDbStorage.value = true;
     const newPath = await resetDbStorageDir();
-    dbStorageDir.value = String(newPath || '');
+    dbStorageDir.value = String(newPath.path || '');
     hasCustomDbStorage.value = false;
-    toast.success(localeMsg.value.settings?.database?.restore_default_success || 'Library data has been moved back to the default location');
+    if (newPath.cleanupWarnings?.length) {
+      toast.warning(`${localeMsg.value.settings?.database?.cleanup_warning || 'Library data was moved, but some old files could not be removed:'}\n${newPath.cleanupWarnings.join('\n')}`, { duration: 10000 });
+    } else {
+      toast.success(localeMsg.value.settings?.database?.restore_default_success || 'Library data has been moved back to the default location');
+    }
   } catch (error: any) {
     toast.error(error?.message || String(error));
   } finally {

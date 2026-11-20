@@ -1,7 +1,8 @@
-import { format } from 'date-fns';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
-import { convertFileSrc } from '@tauri-apps/api/core';
+import { invoke } from '@tauri-apps/api/core';
 import { useUIStore } from '@/stores/uiStore';
+import { config } from '@/common/config';
+import { appendRawDisplayParams, rawDisplayKey } from './rawDisplay';
 
 /// get the current operating system (mac, win, linux, or '')
 export function getOS() {
@@ -84,6 +85,11 @@ export function getFileExtension(fileName: string): string {
   return fileName.split('.').pop() || '';
 }
 
+export function formatRawPairBadge(companionPath?: string | null): string {
+  const extension = getFileExtension(companionPath || '').toLowerCase();
+  return ['heic', 'heif', 'hif'].includes(extension) ? 'RAW+HEIC' : 'RAW+JPEG';
+}
+
 /// get the seconds of slide show interval
 export function getSlideShowInterval(interval: number): number {
   return [1, 3, 5, 10, 15, 30][interval] || 1;
@@ -99,14 +105,56 @@ export function getDaysElapsed(timestamp: number): number {
   return Math.floor(diff / (60 * 60 * 24));
 }
 
-/// format timestamp to string
-export function formatTimestamp(timestamp: number, formatStr: string): string {
-  if (!timestamp || isNaN(timestamp)) return '';
+/// Date/time formatting via Intl.DateTimeFormat (ICU/CLDR), which produces the
+/// correct regional format on macOS, Windows, and Linux without per-locale
+/// pattern strings. The locale source is chosen by config.settings.dateTimeFormat:
+/// 0 = follow the system region, 1 = follow the app language.
+export type DateTimeStyle =
+  | 'year' | 'month' | 'date' | 'date_long' | 'month_date'
+  | 'date_long_with_weekday' | 'date_time' | 'date_time_long';
+
+const DATE_TIME_STYLE_OPTIONS: Record<DateTimeStyle, Intl.DateTimeFormatOptions> = {
+  year: { year: 'numeric' },
+  month: { month: 'long', year: 'numeric' },
+  date: { dateStyle: 'short' },
+  date_long: { dateStyle: 'long' },
+  month_date: { month: 'long', day: 'numeric' },
+  date_long_with_weekday: { dateStyle: 'full' },
+  date_time: { dateStyle: 'short', timeStyle: 'medium' },
+  date_time_long: { dateStyle: 'long', timeStyle: 'medium' },
+};
+
+// Intl.DateTimeFormat construction is relatively expensive and dates render a
+// lot (grids, lists), so cache one formatter per (locale, style).
+const dateTimeFormatters = new Map<string, Intl.DateTimeFormat>();
+
+function resolveDateTimeLocale(): string | undefined {
+  if (Number(config.settings.dateTimeFormat) === 1) {
+    return config.settings.language || undefined;
+  }
+  return config.systemLocale || navigator.language || undefined;
+}
+
+/// Format a Date with a named style, honoring the date/time-format setting.
+export function formatDateTimeWithStyle(date: Date, style: DateTimeStyle): string {
+  const locale = resolveDateTimeLocale();
+  const key = `${locale || 'auto'}|${style}`;
   try {
-    return format(new Date(timestamp * 1000), formatStr);
+    let formatter = dateTimeFormatters.get(key);
+    if (!formatter) {
+      formatter = new Intl.DateTimeFormat(locale, DATE_TIME_STYLE_OPTIONS[style] || DATE_TIME_STYLE_OPTIONS.date);
+      dateTimeFormatters.set(key, formatter);
+    }
+    return formatter.format(date);
   } catch (e) {
     return '';
   }
+}
+
+/// format timestamp (unix seconds) to string using a named DateTimeStyle
+export function formatTimestamp(timestamp: number, style: DateTimeStyle): string {
+  if (!timestamp || isNaN(timestamp)) return '';
+  return formatDateTimeWithStyle(new Date(timestamp * 1000), style);
 }
 
 /// format relative time string using i18n keys
@@ -147,13 +195,9 @@ export function formatRelativeTime(timestamp: number, t: (key: string, data?: an
   return t('format.relative_time.years', { count: years });
 }
 
-/// format date to string
-export function formatDate(year: number, month: number, date: number, formatStr: string): string {
-  try {
-    return format(new Date(year, month - 1, date), formatStr);
-  } catch (e) {
-    return '';
-  }
+/// format date (y, 1-based month, d) to string using a named DateTimeStyle
+export function formatDate(year: number, month: number, date: number, style: DateTimeStyle): string {
+  return formatDateTimeWithStyle(new Date(year, month - 1, date), style);
 }
 
 /// get the date range of a month
@@ -174,6 +218,11 @@ export function getCalendarDateRange(year: number, month: number, date: number) 
     endDate = new Date(year, month - 1, date + 1).getTime() / 1000;
   }
   return [startDate, endDate];
+}
+
+/// Total size of a displayed item, including a paired companion.
+export function getMediaItemSize(file: { size?: number | null; companion_size?: number | null } | null | undefined): number {
+  return Number(file?.size ?? 0) + Number(file?.companion_size ?? 0);
 }
 
 /// format file size to string
@@ -253,6 +302,14 @@ function formatAspectRatio(width: number, height: number): string | null {
   return `${actualRatio.toFixed(2)}:1`;
 }
 
+/// Duration badge text for video items.
+export function formatVideoDurationBadge(file?: { file_type?: number | null; duration?: number | null } | null): string {
+  const duration = Number(file?.duration);
+  return file?.file_type === 2 && Number.isFinite(duration) && duration > 0
+    ? formatDuration(duration)
+    : '';
+}
+
 /// format duration to string
 export function formatDuration(seconds: number): string {
   const hours = Math.floor(seconds / 3600);
@@ -264,6 +321,22 @@ export function formatDuration(seconds: number): string {
   } else {
     return `${minutes}:${String(secs).padStart(2, '0')}`;
   }
+}
+
+/** Display latitude first in DMS; rounding total seconds handles minute/degree carry. */
+export function formatGpsCoordinates(latitude: number | string | null | undefined, longitude: number | string | null | undefined): string {
+  if (latitude == null || longitude == null || String(latitude).trim() === '' || String(longitude).trim() === '') return '';
+  const lat = Number(latitude);
+  const lon = Number(longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) return '';
+  const format = (value: number, positive: string, negative: string) => {
+    const hundredths = Math.round(Math.abs(value) * 360000);
+    const degrees = Math.floor(hundredths / 360000);
+    const minutes = Math.floor((hundredths % 360000) / 6000);
+    const seconds = ((hundredths % 6000) / 100).toFixed(2);
+    return `${degrees}°${String(minutes).padStart(2, '0')}′${seconds.padStart(5, '0')}″ ${value < 0 ? negative : positive}`;
+  };
+  return `${format(lat, 'N', 'S')}, ${format(lon, 'E', 'W')}`;
 }
 
 /// format camera 
@@ -292,6 +365,12 @@ export function formatCaptureSettingValue(value: string | null | undefined): str
 }
 
 /// format capture settings to string
+export function formatTakenDate(file?: { e_date_time?: string | null; taken_date?: number | null } | null): string {
+  return file?.e_date_time?.trim() && file.taken_date != null
+    ? formatTimestamp(file.taken_date, 'date_time')
+    : '';
+}
+
 export function formatCaptureSettings(focal_length: string, exposure_time: string, f_number: string, iso_speed: string, exposure_bias: string): string {
   let result = '';
   result += focal_length ? formatCaptureSettingValue(focal_length) : '';
@@ -306,6 +385,37 @@ export function formatCaptureSettings(focal_length: string, exposure_time: strin
   }
 
   return result;
+}
+
+// Resolve the physical files represented by a selected clipboard item.
+export function getClipboardItemPaths(file: {
+  file_path?: string;
+  media_subtype?: string;
+  live_photo_video_path?: string | null;
+} | null | undefined, groupRawPairs: boolean): string[] {
+  if (!file?.file_path) return [];
+  const grouped = file.media_subtype === 'live_photo'
+    || (groupRawPairs && file.media_subtype === 'raw_jpeg_pair');
+  if (!grouped) return [file.file_path];
+  if (!file.live_photo_video_path) throw new Error('Companion path is unavailable');
+  return [file.file_path, file.live_photo_video_path];
+}
+
+// With no grouping argument, File Info copies exactly the file it shows.
+export async function copyFilePaths(
+  files: Array<Parameters<typeof getClipboardItemPaths>[0]>,
+  groupRawPairs?: boolean,
+) {
+  const paths = new Set<string>();
+  for (const file of files) {
+    const itemPaths = groupRawPairs === undefined
+      ? (file?.file_path ? [file.file_path] : [])
+      : getClipboardItemPaths(file, groupRawPairs);
+    for (const path of itemPaths) paths.add(path);
+  }
+  if (!paths.size) return 0;
+  await invoke('copy_file_paths', { filePaths: [...paths] });
+  return paths.size;
 }
 
 /// get full path
@@ -391,7 +501,7 @@ const thumbnailDataUrlInflight = new Map<string, Promise<string>>();
 let thumbnailDataUrlCacheBytes = 0;
 
 function getThumbnailCacheKey(fileId: number, thumbnailSize = 0): string {
-  return `${_thumbLibraryId}:${thumbnailSize}:${fileId}`;
+  return `${_thumbLibraryId}:${thumbnailSize}:${fileId}:${rawDisplayKey()}`;
 }
 
 function estimateDataUrlBytes(dataUrl: string): number {
@@ -500,6 +610,8 @@ export function getThumbUrl(
   const scheme = isWin ? 'http://thumb.localhost' : 'thumb://localhost';
   const base = `${scheme}/${_thumbLibraryId}/${fileId}`;
   const params = new URLSearchParams();
+  appendRawDisplayParams(params);
+  if (thumbnailSize > 0) params.set('size', String(thumbnailSize));
   if (fileVersion > 0) params.set('v', String(fileVersion));
   if (bustCache) params.set('t', String(Date.now()));
   const query = params.toString();
@@ -511,15 +623,21 @@ export function getPreviewUrl(
   filePath?: string | null,
   bustCache = false,
   fileVersion = 0,
-  rawThumbnailSource = 'processed',
+  forEditing = false,
 ): string {
   if (!fileId || fileId <= 0) return '';
   const scheme = isWin ? 'http://preview.localhost' : 'preview://localhost';
   const base = `${scheme}/${_thumbLibraryId}/${fileId}`;
 
   const params = new URLSearchParams();
+  if (forEditing) {
+    // Editing uses the same decoder pipeline as export, independently of browsing.
+    params.set('forEditing', 'true');
+  } else {
+    appendRawDisplayParams(params);
+  }
   if (fileVersion > 0) params.set('v', String(fileVersion));
-  if (rawThumbnailSource === 'embedded') params.set('rawThumbnailSource', 'embedded');
+
   if (filePath) {
     const uiStore = useUIStore();
     const localVersion = uiStore.getFileVersion(filePath);
@@ -536,6 +654,13 @@ export function getPreviewUrl(
 export const LARGE_IMAGE_PREVIEW_THRESHOLD = 24_000_000;
 export const LARGE_IMAGE_PREVIEW_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp'];
 
+const affinityExtensions = ['af', 'afphoto', 'afdesign', 'afpub'];
+
+export function isPreviewOnlyDocument(filePath = ''): boolean {
+  const extension = getFileExtension(filePath).toLowerCase();
+  return extension === 'psd' || affinityExtensions.includes(extension);
+}
+
 export function shouldUseBackendPreview(filePath = '', fileType = 0, width = 0, height = 0): boolean {
   if (!filePath) return false;
   if (Number(fileType) === 3) return true;
@@ -545,6 +670,7 @@ export function shouldUseBackendPreview(filePath = '', fileType = 0, width = 0, 
     return true;
   }
   if ([
+    ...affinityExtensions,
     'tif', 'tiff', 'jxl', 'heic', 'heif', 'hif',
     'exr', 'hdr', 'rgbe', 'psd', 'jp2', 'j2k', 'j2c', 'jpc', 'jpf', 'jpx',
     'dpx', 'dds', 'tga', 'qoi', 'fits', 'fit', 'fts'
@@ -570,15 +696,10 @@ export function getThumbnailDataUrl(
   placeholder = '',
   bustCache = false,
   thumbnailSize = 0,
-  filePath?: string | null,
   fileVersion = 0,
 ): string {
   if (!thumb || thumb.file_id == null || thumb.file_id <= 0) {
     return placeholder;
-  }
-  if (thumb.error_code === 2) {
-    if (filePath) return getAssetSrc(filePath, fileVersion);
-    return getThumbUrl(thumb.file_id, bustCache, thumbnailSize, fileVersion) || placeholder;
   }
   if (thumb.error_code !== 0) {
     return placeholder;
@@ -692,14 +813,18 @@ export function scrollToFolder(folderId: number) {
   }
 }
 
+let originalMediaBaseUrl = '';
+
+export async function initializeOriginalMedia() {
+  originalMediaBaseUrl = await invoke<string>('original_media_base_url');
+}
+
 // get image file asset source url with version number
 export function getAssetSrc(filePath: string, fileVersion = 0): string {
-  if (!filePath) {
-    return '';
-  }
+  if (!filePath || !originalMediaBaseUrl) return '';
   const uiStore = useUIStore();
   const localVersion = uiStore.getFileVersion(filePath);
-  const assetUrl = convertFileSrc(filePath);
+  const assetUrl = `${originalMediaBaseUrl}${encodeURIComponent(filePath)}`;
   const params = new URLSearchParams();
   if (fileVersion > 0) params.set('v', String(fileVersion));
   if (localVersion > 0) params.set('u', String(localVersion));

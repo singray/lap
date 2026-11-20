@@ -87,6 +87,7 @@
             :isSyncViewport="isSyncViewport"
             :showSyncViewportControl="isCompareModeSession"
             :forceToolbarVisible="isFullScreen && splitToolbarVisible"
+            @toggle-af-areas="getViewerRef(activePane)?.toggleAfAreas?.()"
             @prev="clickPrev(activePane)"
             @next="clickNext(activePane)"
             @toggle-slide-show="clickSlideShow(activePane)"
@@ -126,6 +127,7 @@
                 :canInteract="isPaneAvailable(pane) && activePane === pane"
                 :isPlaybackActive="isPaneAvailable(pane) && activePane === pane"
                 :showToolbar="false"
+                :forceToolbarVisible="isFullScreen && splitToolbarVisible"
                 :imageScale="getPaneScale(pane).scale"
                 :imageMinScale="getPaneScale(pane).min"
                 :imageMaxScale="getPaneScale(pane).max"
@@ -168,9 +170,7 @@
         :selected-file="activeFileInfo"
         :selected-item-index="getFileIndexByPane(statusPane)"
         :total-file-count="fileCount"
-        :total-file-size="activeFileInfo?.size || 0"
-        :image-scale="getPaneScale(statusPane).display"
-        :show-scale="true"
+        :total-file-size="getMediaItemSize(activeFileInfo)"
         :is-embedded="true"
       />
     </div>
@@ -191,18 +191,8 @@
       @cancel="showAddToCollectionDialog = false"
     />
 
-    <MessageBox
-      v-if="showCommentMsgbox"
-      :title="$t('msgbox.edit_comment.title')"
-      :showInput="true"
-      :inputText="activeFileInfo?.comments ?? ''"
-      :inputPlaceholder="$t('msgbox.edit_comment.placeholder')"
-      :multiLine="true"
-      :OkText="$t('msgbox.ok')"
-      :cancelText="$t('msgbox.cancel')"
-      @ok="onEditComment"
-      @cancel="showCommentMsgbox = false"
-    />
+    <EditMetadataDialog v-if="showCommentMsgbox && metadataFiles.length" :files="metadataFiles" :focus-field="metadataFocus"
+    @saved="onMetadataSaved" @cancel="showCommentMsgbox = false" />
 
   </div>
 
@@ -210,17 +200,22 @@
 
 <script setup lang="ts">
 
+import { getVisibleEditableMetadataFields } from '@/common/fileInfoFields';
+import EditMetadataDialog from "@/components/EditMetadataDialog.vue";
+import { isOriginalStorageUnavailable, isOriginalUnavailable, setAlbumAccessibility, resetFileAccessibility } from '@/common/availability';
 import { ref, watch, computed, onMounted, onUnmounted, reactive } from 'vue';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { emit, listen } from '@tauri-apps/api/event';
 import { useI18n } from 'vue-i18n';
 import { useToast } from '@/common/toast';
 import { useUIStore } from '@/stores/uiStore';
-import { config } from '@/common/config';
-import { isWin, isMac, isLinux, setTheme, getSlideShowInterval, SCALE_VALUES } from '@/common/utils';
+import { config, libConfig } from '@/common/config';
+import { isWin, isMac, isLinux, copyFilePaths, getClipboardItemPaths, getMediaItemSize, getSlideShowInterval, SCALE_VALUES } from '@/common/utils';
 import { matchesShortcut, ShortcutActionId, ShortcutPlatform, VIEW_BACKGROUND_SHORTCUTS } from '@/common/shortcuts';
+import { handleVideoPlaybackShortcut, handleVideoEscapeShortcut } from '@/common/video';
 import {
-  editFileComment,
+  checkFileAccessibility,
+  copyImages,
   getFileCollections,
   getFileInfo,
   getTagsForFile,
@@ -284,11 +279,9 @@ const slideShowIntervalIndex = ref(Number(config.settings.slideShowInterval ?? 0
 let timer: NodeJS.Timeout | null = null;  // Timer for slide show
 
 const imageScale = ref(1);          // Image scale
-const imageDisplayScale = ref(1);   // User-facing image scale
 const imageMinScale = ref(0);       // Minimum image scale
 const imageMaxScale = ref(10);      // Maximum image scale
 const rightImageScale = ref(1);     // Right image scale
-const rightImageDisplayScale = ref(1); // User-facing right image scale
 const rightImageMinScale = ref(0);  // Right minimum scale
 const rightImageMaxScale = ref(10); // Right maximum scale
 
@@ -303,17 +296,16 @@ const extraPaneState = reactive<Record<'bottomLeft' | 'bottomRight', {
   nextFilePath: string;
   isZoomFit: boolean;
   scale: number;
-  displayScale: number;
   minScale: number;
   maxScale: number;
 }>>({
   bottomLeft: {
     fileId: 0, fileIndex: -1, fileInfo: null, nextFilePath: '',
-    isZoomFit: true, scale: 1, displayScale: 1, minScale: 0, maxScale: 10,
+    isZoomFit: true, scale: 1, minScale: 0, maxScale: 10,
   },
   bottomRight: {
     fileId: 0, fileIndex: -1, fileInfo: null, nextFilePath: '',
-    isZoomFit: true, scale: 1, displayScale: 1, minScale: 0, maxScale: 10,
+    isZoomFit: true, scale: 1, minScale: 0, maxScale: 10,
   },
 });
 const visiblePanes = computed<Pane[]>(() =>
@@ -322,11 +314,14 @@ const visiblePanes = computed<Pane[]>(() =>
 const showTaggingDialog = ref(false);
 const showAddToCollectionDialog = ref(false);
 const showCommentMsgbox = ref(false);
+const metadataFiles = ref<any[]>([]);
+const metadataFocus = 'comments';
 const taggingFileIds = ref<number[]>([]);
 const collectionFileIds = ref<number[]>([]);
 
 let unlistenImg: () => void;
 let unlistenGridView: () => void;
+let unlistenAlbumAccessChanged: (() => void) | null = null;
 let unlistenFilesDeleted: (() => void) | null = null;
 
 const activeFileInfo = computed(() => {
@@ -372,6 +367,7 @@ onMounted(async() => {
   appWindow.setFocus();
   applyViewerScale(Number(config.settings.scale || 1));
   window.addEventListener('keydown', handleKeyDown);
+  window.addEventListener('keydown', handleVideoSpaceKeyDown, true);
   window.addEventListener('resize', handleResize);
 
   const urlParams = new URLSearchParams(window.location.search);
@@ -400,6 +396,22 @@ onMounted(async() => {
   rightIsZoomFit.value = true;
   activePane.value = 'left';
   isFullScreen.value = !!config.imageViewer?.isFullScreen;
+
+  unlistenAlbumAccessChanged = await listen('album-accessibility-changed', async (event: any) => {
+    const { albumId, rootPath, available, libraryId } = event.payload || {};
+    if (libraryId !== libConfig._libraryId) return;
+    setAlbumAccessibility(albumId, available);
+    resetFileAccessibility(rootPath);
+    await Promise.all(getAvailablePanes().map(async pane => {
+      const file = getFileInfoByPane(pane);
+      if (!file || Number(file.album_id) !== Number(albumId)) return;
+      const updated = await getFileInfo(file.id);
+      if (libraryId !== libConfig._libraryId || getFileInfoByPane(pane)?.id !== file.id) return;
+      if (pane === 'left') fileInfo.value = updated;
+      else if (pane === 'right') rightFileInfo.value = updated;
+      else extraPaneState[pane].fileInfo = updated;
+    }));
+  });
 
   // Listen 
   unlistenImg = await listen('update-img', async (event: any) => {
@@ -572,6 +584,7 @@ onMounted(async() => {
 
 onUnmounted(() => {
   window.removeEventListener('keydown', handleKeyDown);
+  window.removeEventListener('keydown', handleVideoSpaceKeyDown, true);
   window.removeEventListener('resize', handleResize);
   document.documentElement.style.fontSize = '';
   clearSlideShowTimer();
@@ -580,11 +593,68 @@ onUnmounted(() => {
   unlistenImg();
   unlistenGridView();
   if (unlistenFilesDeleted) unlistenFilesDeleted();
+  unlistenAlbumAccessChanged?.();
 });
 
+async function copyActiveFilePath() {
+  try {
+    const count = await copyFilePaths([getFileInfoByPane(getActivePane())], config.settings.groupRawJpegPairs);
+    if (count > 0) toast.success(t('file_info.paths_copied', { count }));
+  } catch (error) {
+    console.error('Failed to copy file path:', error);
+    toast.error(t('file_info.copy_path_failed'));
+  }
+}
+
+async function copyActiveFiles(pane = getActiveFilePane()) {
+  const file = getFileInfoByPane(pane);
+  if (!file) return;
+  try {
+    if (isOriginalStorageUnavailable(file)) {
+      toast.warning(t('offline.requires_original'));
+      return;
+    }
+    const paths = getClipboardItemPaths(file, config.settings.groupRawJpegPairs);
+    if (!paths.length) return;
+    const available = await Promise.all(paths.map(path => checkFileAccessibility(path)));
+    if (available.some(value => !value)) {
+      toast.warning(t('offline.requires_original'));
+      return;
+    }
+    const count = await copyImages(paths, paths.length === 2);
+    if (count > 0) {
+      toast.success(t('tooltip.copy_image.success', { count: count.toLocaleString() }));
+      return;
+    }
+  } catch (error) {
+    console.error('Failed to copy files to clipboard:', error);
+  }
+  toast.error(t('tooltip.copy_image.failed'));
+}
+
 // Handle keyboard shortcuts
+function handleVideoSpaceKeyDown(event: KeyboardEvent) {
+  if (uiStore.inputStack.length > 0 || getFileInfoByPane(getActivePane())?.file_type !== 2) return;
+  handleVideoEscapeShortcut(event, shortcutPlatform, () => closeWindow());
+  if (event.defaultPrevented) return;
+  handleVideoPlaybackShortcut(event, shortcutPlatform, () => getViewerRef(getActivePane())?.togglePlay?.());
+}
+
 function handleKeyDown(event: KeyboardEvent) {
   if(uiStore.inputStack.length > 0) {
+    return;
+  }
+
+  const isEditingText = event.target instanceof HTMLElement
+    && (event.target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target.tagName));
+  if (!isEditingText && matchesShortcut('view.toggleFullscreen', event, shortcutPlatform)) {
+    event.preventDefault();
+    if (!event.repeat) toggleNativeFullScreen();
+    return;
+  }
+  if (matchesShortcut('file.copyPath', event, shortcutPlatform) && !isEditingText) {
+    event.preventDefault();
+    if (!event.repeat) void copyActiveFilePath();
     return;
   }
 
@@ -599,36 +669,36 @@ function handleKeyDown(event: KeyboardEvent) {
     return;
   }
 
-  // Disable keyboard events during slideshow except close and toggle slideshow.
+  // Keep only close and background shortcuts available during slideshow.
   if (
     isSlideShow.value &&
     !matchesShortcut('view.close', event, shortcutPlatform) &&
     !matchesShortcut('view.cycleBackground', event, shortcutPlatform) &&
-    getMatchedViewBackground(event) === null &&
-    !matchesShortcut('slideshow.toggle', event, shortcutPlatform)
+    getMatchedViewBackground(event) === null
   ) {
+    return;
+  }
+
+  if (matchesShortcut('file.copy', event, shortcutPlatform) && !isEditingText) {
+    event.preventDefault();
+    if (!event.repeat) void copyActiveFiles();
     return;
   }
 
   const ratingShortcut = getMatchedRating(event);
   if (ratingShortcut !== null) {
     event.preventDefault();
-    void setCurrentFileRating(ratingShortcut, getActiveFilePane());
+    if (!event.repeat) void setCurrentFileRating(ratingShortcut, getActiveFilePane(), event.shiftKey);
     return;
   }
 
   const cullingShortcut = getMatchedCulling(event);
   if (cullingShortcut !== null) {
     event.preventDefault();
-    void setCurrentFileCullingFlag(cullingShortcut, getActiveFilePane());
+    if (!event.repeat) void setCurrentFileCullingFlag(cullingShortcut, getActiveFilePane(), event.shiftKey);
     return;
   }
 
-  if (matchesShortcut('slideshow.toggle', event, shortcutPlatform)) {
-    event.preventDefault();
-    clickSlideShow(getActiveFilePane());
-    return;
-  }
 
   if (matchesShortcut('view.cycleBackground', event, shortcutPlatform)) {
     event.preventDefault();
@@ -644,9 +714,17 @@ function handleKeyDown(event: KeyboardEvent) {
     return;
   }
 
+  if (matchesShortcut('view.toggleAfAreas', event, shortcutPlatform)) {
+    const target = event.target as HTMLElement | null;
+    if (event.defaultPrevented || target?.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target?.tagName || '')) return;
+    event.preventDefault();
+    if (!event.repeat) getViewerRef(getActivePane())?.toggleAfAreas?.();
+    return;
+  }
+
   if (matchesShortcut('meta.favorite', event, shortcutPlatform)) {
     event.preventDefault();
-    void toggleFavorite(getActiveFilePane());
+    if (!event.repeat) void toggleFavorite(getActiveFilePane(), event.shiftKey);
     return;
   }
 
@@ -656,15 +734,20 @@ function handleKeyDown(event: KeyboardEvent) {
     return;
   }
 
+  if (matchesShortcut('meta.edit', event, shortcutPlatform)) {
+    event.preventDefault();
+    if (!event.repeat) openCommentEditor(getActiveFilePane());
+    return;
+  }
+
   if (matchesShortcut('meta.collection', event, shortcutPlatform)) {
     event.preventDefault();
     clickAddToCollection(getActiveFilePane());
     return;
   }
 
-  if (matchesShortcut('meta.comment', event, shortcutPlatform)) {
-    event.preventDefault();
-    openCommentEditor(getActiveFilePane());
+  if (!isEditingText && matchesShortcut('view.cycleRawPreview', event, shortcutPlatform)) {
+    if (!event.repeat && getViewerRef(getActivePane())?.cycleRawPreview?.()) event.preventDefault();
     return;
   }
 
@@ -867,21 +950,6 @@ const handleResize = async () => {
   }
 };
 
-/// watch appearance
-watch(() => config.settings.appearance, (newAppearance) => {
-  setTheme(newAppearance, newAppearance === 0 ? config.settings.lightTheme : config.settings.darkTheme);
-});
-
-/// watch light theme
-watch(() => config.settings.lightTheme, (newLightTheme) => {
-  setTheme(config.settings.appearance, newLightTheme);
-});
-
-/// watch dark theme
-watch(() => config.settings.darkTheme, (newDarkTheme) => {
-  setTheme(config.settings.appearance, newDarkTheme);
-});
-
 watch(() => Number(config.settings.scale || 1), (newScale) => {
   applyViewerScale(newScale);
 });
@@ -1004,7 +1072,7 @@ function scheduleNextSlide() {
   if (!isSlideShow.value) return;
 
   // If current file is video, don't set timer - video's ended event will trigger next
-  if (isCurrentFileVideo()) {
+  if (isCurrentFileVideo() && !isOriginalUnavailable(fileInfo.value)) {
     return;
   }
 
@@ -1013,6 +1081,10 @@ function scheduleNextSlide() {
     advanceSlideShow();
   }, interval);
 }
+
+watch(() => isOriginalUnavailable(fileInfo.value), () => {
+  if (isSlideShow.value) scheduleNextSlide();
+});
 
 function startSlideShow() {
   scheduleNextSlide();
@@ -1068,7 +1140,7 @@ function clearSecondaryPanes() {
   for (const pane of ['bottomLeft', 'bottomRight'] as const) {
     Object.assign(extraPaneState[pane], {
       fileId: 0, fileIndex: -1, fileInfo: null, nextFilePath: '',
-      isZoomFit: true, scale: 1, displayScale: 1, minScale: 0, maxScale: 10,
+      isZoomFit: true, scale: 1, minScale: 0, maxScale: 10,
     });
   }
 }
@@ -1116,19 +1188,19 @@ function getNextFilePathByPane(pane: Pane = 'left') {
 function getPaneScale(pane: Pane) {
   if (pane === 'right') {
     return {
-      scale: rightImageScale.value, display: rightImageDisplayScale.value,
+      scale: rightImageScale.value,
       min: rightImageMinScale.value, max: rightImageMaxScale.value,
     };
   }
   if (pane === 'bottomLeft' || pane === 'bottomRight') {
     const state = extraPaneState[pane];
     return {
-      scale: state.scale, display: state.displayScale,
+      scale: state.scale,
       min: state.minScale, max: state.maxScale,
     };
   }
   return {
-    scale: imageScale.value, display: imageDisplayScale.value,
+    scale: imageScale.value,
     min: imageMinScale.value, max: imageMaxScale.value,
   };
 }
@@ -1234,7 +1306,6 @@ const closeWindow = () => {
 const clickScale = (event: any, pane: Pane = 'left') => {
   if (pane === 'right') {
     rightImageScale.value = event.scale;
-    rightImageDisplayScale.value = event.displayScale ?? event.scale;
     rightImageMinScale.value = event.minScale;
     rightImageMaxScale.value = event.maxScale;
     return;
@@ -1242,14 +1313,12 @@ const clickScale = (event: any, pane: Pane = 'left') => {
   if (pane === 'bottomLeft' || pane === 'bottomRight') {
     const state = extraPaneState[pane];
     state.scale = event.scale;
-    state.displayScale = event.displayScale ?? event.scale;
     state.minScale = event.minScale;
     state.maxScale = event.maxScale;
     return;
   }
 
   imageScale.value = event.scale;
-  imageDisplayScale.value = event.displayScale ?? event.scale;
   imageMinScale.value = event.minScale;
   imageMaxScale.value = event.maxScale;
 };
@@ -1262,29 +1331,46 @@ const toggleSyncViewport = () => {
   }
 };
 
-const toggleFavorite = async (pane: Pane = 'left') => {
+function advanceAfterMetadataShortcut(fileId: number, pane: Pane) {
+  if (getFileIdByPane(pane) === fileId && getActiveFilePane() === pane
+      && getFileIndexByPane(pane) < fileCount.value - 1) {
+    clickNext(pane);
+  }
+}
+
+const toggleFavorite = async (pane: Pane = 'left', advance = false) => {
   const target = getFileInfoByPane(pane);
   const currentFileId = getFileIdByPane(pane);
   if (!target || currentFileId <= 0) return;
 
-  const isFavorite = !target.is_favorite;
+  const previous = target.is_favorite;
+  const isFavorite = !previous;
   applyFileMetaToPanes(currentFileId, { is_favorite: isFavorite });
-  await setFileFavorite(currentFileId, isFavorite);
+  if (await setFileFavorite(currentFileId, isFavorite) === null) {
+    applyFileMetaToPanes(currentFileId, { is_favorite: previous });
+    return;
+  }
   syncFileMetaToContent(currentFileId, { is_favorite: isFavorite });
+  if (advance) advanceAfterMetadataShortcut(currentFileId, pane);
 };
 
-const setCurrentFileRating = async (rating: number, pane: Pane = 'left') => {
+const setCurrentFileRating = async (rating: number, pane: Pane = 'left', advance = false) => {
   const target = getFileInfoByPane(pane);
   const currentFileId = getFileIdByPane(pane);
   if (!target || currentFileId <= 0) return;
 
-  const normalized = Number(target.rating || 0) === rating ? 0 : rating;
+  const previous = Number(target.rating || 0);
+  const normalized = Math.max(0, Math.min(5, rating));
   applyFileMetaToPanes(currentFileId, { rating: normalized });
-  await setFileRating(currentFileId, normalized);
+  if (await setFileRating(currentFileId, normalized) === null) {
+    applyFileMetaToPanes(currentFileId, { rating: previous });
+    return;
+  }
   syncFileMetaToContent(currentFileId, { rating: normalized });
+  if (advance) advanceAfterMetadataShortcut(currentFileId, pane);
 };
 
-const setCurrentFileCullingFlag = async (cullingFlag: number, pane: Pane = 'left') => {
+const setCurrentFileCullingFlag = async (cullingFlag: number, pane: Pane = 'left', advance = false) => {
   const target = getFileInfoByPane(pane);
   const currentFileId = getFileIdByPane(pane);
   if (!target || currentFileId <= 0) return;
@@ -1299,6 +1385,7 @@ const setCurrentFileCullingFlag = async (cullingFlag: number, pane: Pane = 'left
   }
   syncFileMetaToContent(currentFileId, { culling_flag: normalized });
   void emit('culling-status-updated');
+  if (advance) advanceAfterMetadataShortcut(currentFileId, pane);
 };
 
 const clickRotate = async (pane: Pane = 'left', rotateDelta = 90) => {
@@ -1327,10 +1414,12 @@ const clickTag = (pane: Pane = 'left') => {
 };
 
 const openCommentEditor = (pane: Pane = 'left') => {
+  if (showCommentMsgbox.value || !getVisibleEditableMetadataFields(config.infoPanel.fields).length) return;
   const currentFileId = getFileIdByPane(pane);
   if (currentFileId <= 0) return;
 
   setActivePane(pane);
+  metadataFiles.value = [activeFileInfo.value];
   showCommentMsgbox.value = true;
 };
 
@@ -1383,22 +1472,18 @@ async function handleCollectionDeleted(collectionId: number) {
   }
 }
 
-const onEditComment = async (newComment: any) => {
-  const target = activeFileInfo.value;
-  const currentFileId = activeFileId.value;
-  if (!target || currentFileId <= 0) return;
-
-  const result = await editFileComment(currentFileId, newComment);
-  if (result) {
-    applyFileMetaToPanes(currentFileId, { comments: newComment });
-    showCommentMsgbox.value = false;
-    syncFileMetaToContent(currentFileId, { comments: newComment });
+function onMetadataSaved(files: any[], changes: Record<string, string>) {
+  for (const file of files) {
+    applyFileMetaToPanes(file.id, changes);
+    syncFileMetaToContent(file.id, changes);
   }
-};
+  showCommentMsgbox.value = false;
+}
 
 async function updateFileHasTags(fileStates: Array<{ file_id: number; has_tags: boolean }>) {
   await syncTagStates(fileStates);
   showTaggingDialog.value = false;
+  void emit("tags-changed");
 }
 
 async function syncTagStates(fileStates: Array<{ file_id: number; has_tags: boolean }>) {
@@ -1421,6 +1506,9 @@ const handleItemAction = async (payload: { action: string }) => {
   const pane = getActiveFilePane();
 
   switch (payload.action) {
+    case 'copy':
+      await copyActiveFiles(pane);
+      break;
     case 'favorite':
       await toggleFavorite(pane);
       break;

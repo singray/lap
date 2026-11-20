@@ -26,6 +26,7 @@
 </template>
 
 <script setup>
+import { MAP_DETAIL_ZOOM, MAP_DETAIL_LIMIT, MAP_MARKER_FADE_MS, MAP_SINGLE_POINT_FIT_ZOOM } from '@/common/constants';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import L from 'leaflet'
@@ -51,6 +52,7 @@ const props = defineProps({
   querySource: { type: String, default: 'query' },
   collectionId: { type: Number, default: null },
   fileIds: { type: Array, default: () => [] },
+  selectedFile: { type: Object, default: null },
   restoreView: { type: Object, default: null },
   active: { type: Boolean, default: true },
   lat: { type: Number, default: 0 },
@@ -70,12 +72,6 @@ const totalCount = computed(() => points.value.reduce((sum, point) => sum + poin
 const isQueryMap = computed(() => props.queryParams !== null)
 const showAppleMapsButton = computed(() => !isQueryMap.value && isMac && validLatLon(props.lat, props.lon))
 
-const DETAIL_ZOOM = 13
-const DETAIL_LIMIT = 500
-const MARKER_FADE_MS = 200
-// Leaflet resolves a one-point bounds to its maximum zoom. Keep surrounding
-// map context and avoid requesting an unsupported raster detail level instead.
-const SINGLE_POINT_FIT_ZOOM = 13
 const activeMaxZoom = ref(19)
 
 let map = null
@@ -146,6 +142,7 @@ onBeforeUnmount(() => {
 })
 
 watch(() => [config.infoPanel.mapTheme, config.settings.mapProvider, config.settings.tiandituToken], updateTheme)
+watch(() => [props.selectedFile?.id, props.selectedFile?.gps_latitude, props.selectedFile?.gps_longitude], updateMarkerSelection)
 watch(() => config.settings.mapMarkerSize, () => renderMarkers())
 watch(() => [props.queryParams, props.querySource, props.collectionId, props.fileIds], () => {
   if (!props.active) {
@@ -242,7 +239,7 @@ function onMapChanged() {
 function scheduleDetailFetch() {
   detailRequestToken++
   if (detailTimer) clearTimeout(detailTimer)
-  if (zoom.value < DETAIL_ZOOM || !props.active) return
+  if (zoom.value < MAP_DETAIL_ZOOM || !props.active) return
   detailTimer = setTimeout(fetchVisibleFiles, 200)
 }
 
@@ -255,7 +252,7 @@ function bufferedMapBounds(padding) {
 }
 
 async function fetchVisibleFiles() {
-  if (!map || !props.active || zoom.value < DETAIL_ZOOM) return
+  if (!map || !props.active || zoom.value < MAP_DETAIL_ZOOM) return
   // Reuse complete data until even the rendered buffer leaves the loaded area.
   if (detailBounds?.contains(bufferedMapBounds(176))) return
   const bounds = bufferedMapBounds(352)
@@ -269,34 +266,37 @@ async function fetchVisibleFiles() {
       ...props.queryParams,
       gpsMinLat: bounds.getSouth(), gpsMaxLat: bounds.getNorth(),
       gpsMinLon: bounds.getWest(), gpsMaxLon: bounds.getEast(),
-    }, 0, DETAIL_LIMIT + 1)
+    }, 0, MAP_DETAIL_LIMIT + 1)
   }
   if (token !== detailRequestToken || !map || !props.active || !files) return
   // Never render a truncated detail set as though it were the complete region.
-  detailBounds = files.length <= DETAIL_LIMIT ? bounds : null
-  visibleFiles = files.length <= DETAIL_LIMIT ? files : []
+  detailBounds = files.length <= MAP_DETAIL_LIMIT ? bounds : null
+  visibleFiles = files.length <= MAP_DETAIL_LIMIT ? files : []
   renderMarkers()
 }
 
 async function getMapPoints() {
   sourceFiles = null
+  let ids
   if (props.querySource === 'collection' && props.collectionId) {
-    const ids = await getCollectionQueryFileIds(props.collectionId, props.queryParams)
-    sourceFiles = await getFilesByIds(ids || [])
+    ids = await getCollectionQueryFileIds(props.collectionId, props.queryParams)
   } else if (props.querySource === 'smart') {
-    const ids = await getSmartQueryFileIds(props.queryParams)
-    sourceFiles = await getFilesByIds(ids || [])
+    ids = await getSmartQueryFileIds(props.queryParams)
   } else if (props.querySource === 'search') {
-    sourceFiles = await getFilesByIds(props.fileIds)
+    ids = [...props.fileIds]
   } else {
     return getGpsMapPoints(props.queryParams)
   }
-  return aggregateFiles(sourceFiles || [])
+  // ID lookup does not preserve ordering; use the source query/result order.
+  const order = new Map((ids || []).map((id, index) => [Number(id), index]))
+  const files = await getFilesByIds(ids || [])
+  sourceFiles = (files || []).sort((a, b) => (order.get(Number(a.id)) ?? Infinity) - (order.get(Number(b.id)) ?? Infinity))
+  return aggregateFiles(sourceFiles)
 }
 
 function aggregateFiles(files) {
   const cells = new Map()
-  for (const file of files) {
+  for (const [rank, file] of files.entries()) {
     // Number(null) is 0, which would incorrectly place photos without GPS data
     // at the equator/prime meridian and include them in a map cluster.
     if (file.gps_latitude == null || file.gps_longitude == null || file.gps_latitude === '' || file.gps_longitude === '') continue
@@ -304,11 +304,10 @@ function aggregateFiles(files) {
     const lon = Number(file.gps_longitude)
     if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue
     const key = `${Math.round(lat * 100)}:${Math.round(lon * 100)}`
-    const cell = cells.get(key) || { lat: 0, lon: 0, count: 0, file_id: Number(file.id) }
+    const cell = cells.get(key) || { lat: 0, lon: 0, count: 0, file_id: Number(file.id), rank }
     cell.lat += lat
     cell.lon += lon
     cell.count++
-    cell.file_id = Math.min(cell.file_id, Number(file.id))
     cells.set(key, cell)
   }
   return [...cells.values()].map(cell => ({ ...cell, lat: cell.lat / cell.count, lon: cell.lon / cell.count }))
@@ -328,7 +327,7 @@ function renderMarkers() {
 function requestPhotoClusters() {
   if (!map || !clusterWorker || !props.active || !isQueryMap.value) return
   const spacing = Math.round(Number(config.settings.mapMarkerSize || 64) * 0.75)
-  const useDetails = zoom.value >= DETAIL_ZOOM && visibleFiles.length > 0
+  const useDetails = zoom.value >= MAP_DETAIL_ZOOM && visibleFiles.length > 0
     && detailBounds?.contains(bufferedMapBounds(176))
   const source = useDetails ? 'details' : 'overview'
   const input = useDetails ? visibleFiles : points.value
@@ -336,11 +335,11 @@ function requestPhotoClusters() {
   let cached = previous
   if (!cached || cached.input !== input || cached.maxZoom !== activeMaxZoom.value || cached.spacing !== spacing) {
     const candidates = useDetails
-      ? visibleFiles.filter(file => validLatLon(file.gps_latitude, file.gps_longitude)).map(file => ({
+      ? visibleFiles.filter(file => validLatLon(file.gps_latitude, file.gps_longitude)).map((file, rank) => ({
         lat: Number(file.gps_latitude), lon: Number(file.gps_longitude), file_id: Number(file.id), count: 1,
-        fileIds: [Number(file.id)],
+        fileIds: [Number(file.id)], rank,
       })).sort((a, b) => a.file_id - b.file_id)
-      : points.value.map(point => ({ lat: point.lat, lon: point.lon, file_id: point.file_id, count: point.count, pointIds: [point.file_id] }))
+      : points.value.map(point => ({ lat: point.lat, lon: point.lon, file_id: point.file_id, count: point.count, rank: point.rank, pointIds: [point.file_id] }))
     const signature = useDetails ? JSON.stringify(candidates) : null
     const unchanged = cached && cached.maxZoom === activeMaxZoom.value
       && cached.spacing === spacing && useDetails && cached.signature === signature
@@ -377,9 +376,30 @@ function applyPhotoClusters(clusters) {
     retiringMarkers.set(marker, setTimeout(() => {
       markerLayer?.removeLayer(marker)
       retiringMarkers.delete(marker)
-    }, MARKER_FADE_MS))
+    }, MAP_MARKER_FADE_MS))
   }
   photoMarkers = nextMarkers
+  updateMarkerSelection()
+}
+
+function updateMarkerSelection() {
+  const file = props.selectedFile
+  const fileId = Number(file?.id || 0)
+  const cell = file?.gps_latitude != null && file?.gps_longitude != null
+    ? gpsCell(file, !!sourceFiles) : null
+  const selectedPointIds = new Set(cell === null ? [] : points.value.filter(point =>
+    gpsCell({ gps_latitude: point.lat, gps_longitude: point.lon }, !!sourceFiles) === cell
+  ).map(point => Number(point.file_id)))
+  for (const marker of photoMarkers.values()) {
+    const cluster = marker.photoCluster
+    const selected = fileId > 0 && (cluster?.fileIds
+      ? cluster.fileIds.some(id => Number(id) === fileId)
+      : cluster?.pointIds
+        ? cluster.pointIds.some(id => selectedPointIds.has(Number(id)))
+        : marker.photoFileId === fileId)
+    marker.getElement()?.classList.toggle('map-photo-marker-selected', selected)
+    marker.setZIndexOffset(selected ? 1000 : 0)
+  }
 }
 
 // SQLite ROUND uses half-away-from-zero; local aggregateFiles uses Math.round.
@@ -413,6 +433,7 @@ async function openPhotoCluster(cluster) {
       && cells.has(gpsCell(file, !!localFiles))).map(file => Number(file.id))
   }
   if (requestId !== clusterOpenRequestId || !props.active) return
+  fileIds = [Number(cluster.file_id), ...fileIds.filter(id => Number(id) !== Number(cluster.file_id))]
   emit('open-cluster', { ...cluster, fileIds, count: fileIds.length, view })
 }
 
@@ -426,8 +447,10 @@ function addPhotoMarker(lat, lon, fileId, count, cluster = null) {
     html: `<div class="map-photo-marker"><img src="${getThumbUrl(fileId, false, config.settings.thumbnailSize || 512)}" />${count > 1 ? `<span>${count > 999 ? '999+' : count}</span>` : ''}</div>`,
   })
   const marker = L.marker([lat, lon], { icon, keyboard: false }).addTo(markerLayer)
+  marker.photoFileId = Number(fileId)
+  marker.photoCluster = cluster
   const element = marker.getElement()
-  element?.style.setProperty('--map-photo-fade-duration', `${MARKER_FADE_MS}ms`)
+  element?.style.setProperty('--map-photo-fade-duration', `${MAP_MARKER_FADE_MS}ms`)
   element?.style.setProperty('--map-photo-marker-size', `${size}px`)
   // Wait for the photo itself: otherwise its opacity animation can finish
   // while the thumbnail request is still pending.
@@ -506,7 +529,7 @@ function fitBounds() {
 function fitMapToPoints() {
   map.fitBounds(L.latLngBounds(points.value.map(point => [point.lat, point.lon])), {
     padding: [20, 20],
-    maxZoom: points.value.length === 1 ? Math.min(SINGLE_POINT_FIT_ZOOM, activeMaxZoom.value) : activeMaxZoom.value,
+    maxZoom: points.value.length === 1 ? Math.min(MAP_SINGLE_POINT_FIT_ZOOM, activeMaxZoom.value) : activeMaxZoom.value,
   })
 }
 function zoomCenter() {
@@ -528,3 +551,13 @@ function handleMapKeyDown(event) {
   if (event.key === '-') { event.preventDefault(); zoomOut() }
 }
 </script>
+
+<style scoped>
+:deep(.map-photo-marker-selected .map-photo-marker img) {
+  border-color: var(--color-primary);
+}
+
+:deep(.map-photo-marker-selected .map-photo-marker::after) {
+  border-top-color: var(--color-primary);
+}
+</style>

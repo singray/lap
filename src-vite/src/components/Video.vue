@@ -1,12 +1,19 @@
 <template>
   <div
     ref="videoContainer"
-    class="relative w-full h-full overflow-hidden cursor-pointer"
+    class="relative w-full h-full overflow-hidden cursor-default"
     :class="{ 'pointer-events-none': !isActive }"
     style="touch-action: none;"
     @wheel.prevent="handleWheel"
     @contextmenu="handleContextMenu"
   >
+    <div v-if="originalUnavailable" class="absolute inset-0 z-30 flex items-center justify-center bg-base-200">
+      <img v-if="offlinePoster" :src="offlinePoster" class="max-w-full max-h-full object-contain" @error="offlinePoster = ''" />
+      <div v-else class="flex flex-col items-center justify-center text-base-content/30">
+        <IconVideoSlash class="w-8 h-8 mb-2" />
+        <span>{{ $t('tooltip.not_found.files') }}</span>
+      </div>
+    </div>
     <TransitionGroup :name="transitionName" @after-leave="handleTransitionEnd">
       <div
         v-for="index in [0, 1]"
@@ -24,14 +31,20 @@
       </div>
     </TransitionGroup>
 
-    <div v-if="showPlayOverlay && !hasError && !isPlaying && !isLoading" class="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
-      <div
-        class="w-16 h-16 rounded-full bg-base-100/70 flex items-center justify-center hover:scale-110 transition-all duration-300 ease-out group pointer-events-auto cursor-pointer"
-        @click.stop="clickPlayVideo"
-      >
-        <component :is="isReplaying ? IconVideoReplay : IconVideoPlay" class="w-8 h-8" />
+    <Transition name="playback-overlay" :css="hasPlaybackInteraction && !isPlaying">
+      <div v-if="showPlayOverlay && !hasError && !isLoading && !isSeeking && (playbackFeedback || isReplaying || !hasPlaybackInteraction)"
+        data-video-play-overlay
+        class="absolute inset-0 flex items-center justify-center z-10"
+        :class="playbackFeedback ? 'pointer-events-none' : 'pointer-events-auto cursor-pointer'"
+        @click.stop="clickPlayVideo">
+        <div
+          class="w-16 h-16 rounded-full bg-base-100/70 flex items-center justify-center transition-transform duration-200 ease-out"
+          :class="{ 'pointer-events-auto cursor-pointer': !playbackFeedback }"
+        >
+          <component :is="playbackFeedback === 'pause' ? IconVideoPause : (isReplaying ? IconVideoReplay : IconVideoPlay)" class="w-8 h-8" />
+        </div>
       </div>
-    </div>
+    </Transition>
 
     <Transition name="loading-overlay">
       <div v-if="showSpinner" class="absolute inset-0 flex flex-col items-center justify-center pointer-events-none z-20 bg-base-200/20 px-6 text-center">
@@ -66,14 +79,16 @@
 </template>
 
 <script setup lang="ts">
+import { GESTURE_LOCK_THRESHOLD, HORIZONTAL_NAV_THRESHOLD, PLAYBACK_DEADLINE_MS, DIRECT_PLAYBACK_TIMEOUT_MS, LOADING_OVERLAY_DELAY_MS } from '@/common/constants';
 import { ref, watch, onMounted, onBeforeUnmount, computed, nextTick } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { useToast } from '@/common/toast';
 import { config } from '@/common/config';
-import { IconVideoSlash, IconVideoPlay, IconVideoReplay } from '@/common/icons';
+import { IconVideoSlash, IconVideoPlay, IconVideoReplay, IconVideoPause } from '@/common/icons';
 import videojs from 'video.js/core';
 import 'video.js/dist/video-js.min.css';
-import { getAssetSrc, isLinux, isMac, isWin } from '@/common/utils';
-import { openFileWithApp } from '@/common/api';
+import { getThumbUrl, getAssetSrc, isLinux, isMac, isWin } from '@/common/utils';
+import { isCloudOnlyFile, openFileWithApp } from '@/common/api';
 import zhCN from 'video.js/dist/lang/zh-CN.json';
 import {
   prepareVideo,
@@ -85,6 +100,9 @@ import {
 videojs.addLanguage('zh-CN', zhCN);
 
 const props = defineProps({
+  originalUnavailable: { type: Boolean, default: false },
+  fileId: { type: Number, default: 0 },
+  thumbnailSrc: { type: String, default: '' },
   filePath: { type: String, required: false },
   rotate: { type: Number, default: 0 },
   isZoomFit: { type: Boolean, default: false },
@@ -98,6 +116,7 @@ const props = defineProps({
 
 const emit = defineEmits(['message-from-video-viewer', 'slideshow-next', 'scale', 'viewport-change', 'context-menu']);
 const { t: $t } = useI18n();
+const toast = useToast();
 
 const videoContainer = ref<HTMLDivElement | null>(null);
 const videoElements = ref<HTMLVideoElement[]>([]);
@@ -105,6 +124,10 @@ const players = ref<(ReturnType<typeof videojs> | null)[]>([null, null]);
 const playerEpochs = ref([0, 0]);
 const videoJsLang = computed(() => (config.settings.language === 'zh' ? 'zh-CN' : config.settings.language));
 
+const offlinePoster = ref('');
+watch(() => [props.originalUnavailable, props.fileId, props.thumbnailSrc], () => {
+  offlinePoster.value = props.thumbnailSrc || (props.fileId ? getThumbUrl(props.fileId, false, config.settings.thumbnailSize) : '');
+}, { immediate: true });
 const hasError = ref(false);
 const errorMessage = ref('');
 const isLoading = ref(false);
@@ -112,6 +135,24 @@ const showSpinner = ref(false);
 const isCompatibilityProcessing = ref(false);
 const isPlaying = ref(false);
 const isReplaying = ref(false);
+const hasPlaybackInteraction = ref(false);
+const isSeeking = ref(false);
+const playbackFeedback = ref<'pause' | null>(null);
+let playbackFeedbackTimer: ReturnType<typeof setTimeout> | null = null;
+
+function clearPlaybackFeedback() {
+  if (playbackFeedbackTimer) clearTimeout(playbackFeedbackTimer);
+  playbackFeedbackTimer = null;
+  playbackFeedback.value = null;
+}
+
+function showPlaybackFeedback() {
+  clearPlaybackFeedback();
+  if (isLoading.value || !props.isActive || isSeeking.value || getActivePlayer()?.scrubbing()) return;
+  playbackFeedback.value = 'pause';
+  playbackFeedbackTimer = setTimeout(clearPlaybackFeedback, 1500);
+}
+
 const isFit = ref(false);
 const scale = ref(1);
 const viewportOffset = ref({ x: 0, y: 0 });
@@ -129,7 +170,7 @@ const loadAttemptCleanups: Array<(() => void) | null> = [null, null];
 const externalVideoApp = computed(() => config.defaultExternalApp('video'));
 const externalVideoAppPath = computed(() => String(externalVideoApp.value?.path || '').trim());
 const externalVideoAppName = computed(() => String(externalVideoApp.value?.name || '').trim());
-const canOpenExternalApp = computed(() => !!(props.filePath && externalVideoAppPath.value));
+const canOpenExternalApp = computed(() => !props.originalUnavailable && !!(props.filePath && externalVideoAppPath.value));
 const externalOpenLabel = computed(() => {
   if (externalVideoAppName.value) {
     return $t('video.errors.open_in_external_app_named', { app: externalVideoAppName.value }) || `Open in ${externalVideoAppName.value}`;
@@ -141,8 +182,14 @@ const loadingLabel = computed(() => (
 ));
 
 async function openInExternalApp() {
-  if (!props.filePath || !externalVideoAppPath.value) return;
-  await openFileWithApp(props.filePath, externalVideoAppPath.value);
+  if (props.originalUnavailable || !props.filePath || !externalVideoAppPath.value) return;
+  try {
+    await openFileWithApp(props.filePath, externalVideoAppPath.value);
+  } catch (error) {
+    toast.error(String(error).includes('File is online-only')
+      ? $t('offline.requires_original')
+      : $t('tooltip.open_external.failed'));
+  }
 }
 
 function handleContextMenu(event: MouseEvent) {
@@ -160,8 +207,6 @@ let hasNavigatedThisGesture = false;
 const gestureType = ref<'none' | 'zoom' | 'nav'>('none');
 const navDirection = ref<'next' | 'prev' | ''>('');
 let lastDeltaX = 0;
-const GESTURE_LOCK_THRESHOLD = 10;
-const HORIZONTAL_NAV_THRESHOLD = 100;
 
 const transitionName = computed(() => {
   if (props.isSlideShow) return 'slide-next';
@@ -209,9 +254,7 @@ const playerOptions = computed(() => ({
 }));
 
 const getActivePlayer = () => players.value[activeVideo.value];
-const PLAYBACK_DEADLINE_MS = 30_000;
-const DIRECT_PLAYBACK_TIMEOUT_MS = 8000;
-const LOADING_OVERLAY_DELAY_MS = 500;
+
 let playbackDeadlineTimer: ReturnType<typeof setTimeout> | null = null;
 let loadingOverlayTimer: ReturnType<typeof setTimeout> | null = null;
 const directPlaybackTypes: Record<string, string> = {
@@ -379,18 +422,32 @@ const setupPlayer = (index: number) => {
         }
         isPlaying.value = true;
         isReplaying.value = false;
+        hasPlaybackInteraction.value = true;
+        clearPlaybackFeedback();
       }
     });
 
     player.on('pause', () => {
       if (activeVideo.value === index) {
         isPlaying.value = false;
-        isReplaying.value = false;
+        if (!player.ended()) showPlaybackFeedback();
       }
+    });
+
+    player.on('seeking', () => {
+      if (activeVideo.value !== index) return;
+      isSeeking.value = true;
+      hasPlaybackInteraction.value = true;
+      isReplaying.value = false;
+      clearPlaybackFeedback();
+    });
+    player.on('seeked', () => {
+      if (activeVideo.value === index) isSeeking.value = false;
     });
 
     player.on('ended', () => {
       if (activeVideo.value === index) {
+        clearPlaybackFeedback();
         if (!props.isSlideShow && config.settings.loopVideo) {
           player.play().catch(() => {});
           return;
@@ -443,6 +500,9 @@ const loadVideo = async (filePath: string) => {
   clearLoadingOverlayTimer();
   clearPlaybackDeadlineTimer();
   const currentLoadId = ++currentLoadingId;
+  clearPlaybackFeedback();
+  hasPlaybackInteraction.value = false;
+  isSeeking.value = false;
   
   // IMMEDIATELY set loading state to block volumechange feedbacks from old players
   hasError.value = false;
@@ -462,6 +522,20 @@ const loadVideo = async (filePath: string) => {
   await Promise.allSettled(cancelPromises);
 
   if (currentLoadId !== currentLoadingId) return;
+  if (props.originalUnavailable) {
+    getActivePlayer()?.pause();
+    resetLoadingUi();
+    return;
+  }
+  const cloudOnly = await isCloudOnlyFile(filePath);
+  if (currentLoadId !== currentLoadingId) return;
+  if (cloudOnly) {
+    getActivePlayer()?.pause();
+    resetLoadingUi();
+    hasError.value = true;
+    errorMessage.value = $t('offline.requires_original');
+    return;
+  }
 
   const currentPlayer = getActivePlayer();
   if (currentPlayer) {
@@ -557,12 +631,13 @@ const loadVideo = async (filePath: string) => {
     try {
       const result = await prepareVideo(filePath, playerId, force, backendRequestId);
       if (currentLoadId !== currentLoadingId) return;
-      const playbackSrc = isLinux ? result.url : getAssetSrc(result.url);
+      const playbackSrc = result.url;
+      const isWebm = decodeURIComponent(new URL(playbackSrc).pathname).toLowerCase().endsWith('.webm');
 
       player.reset();
       player.src({
         src: playbackSrc,
-        type: result.action === 'remux' ? 'video/mp4' : (result.url.endsWith('.webm') ? 'video/webm' : 'video/mp4'),
+        type: result.action === 'remux' ? 'video/mp4' : (isWebm ? 'video/webm' : 'video/mp4'),
       });
 
       let preparedAttemptSettled = false;
@@ -618,12 +693,18 @@ const loadVideo = async (filePath: string) => {
     }
   };
 
-  const loadDirect = (type: string | null) => {
+  const loadDirect = async (type: string | null) => {
     resetCompatibilityProcessing();
+    if (currentLoadId !== currentLoadingId) return;
+    const playbackSrc = getAssetSrc(filePath);
+    if (!playbackSrc) {
+      void loadPrepared('compatible');
+      return;
+    }
     player.reset();
     const source = type
-      ? { src: getAssetSrc(filePath), type }
-      : { src: getAssetSrc(filePath) };
+      ? { src: playbackSrc, type }
+      : { src: playbackSrc };
     player.src(source);
 
     let directLoadTimer: ReturnType<typeof setTimeout> | null = null;
@@ -738,7 +819,7 @@ function handlePlayerError(playerInstance: ReturnType<typeof videojs>) {
       case 4: msg = getFallbackErrorMessage(); break;
     }
   } else {
-    msg = $t('video.errors.playback_failed') || 'Playback failed';
+    msg = $t('video.errors.playback_failed');
   }
 
   hasError.value = true;
@@ -884,6 +965,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   currentLoadingId++;
+  clearPlaybackFeedback();
   resetLoadingUi();
   resizeObserver?.disconnect();
   if (videoContainer.value) {
@@ -912,8 +994,8 @@ onBeforeUnmount(() => {
   });
 });
 
-watch(() => props.filePath, (newPath) => {
-  if (newPath) loadVideo(newPath);
+watch(() => [props.filePath, props.originalUnavailable], ([newPath]) => {
+  if (newPath) loadVideo(String(newPath));
 });
 
 watch(() => props.rotate, (val) => {
@@ -946,6 +1028,7 @@ watch(() => props.isActive, (isActive) => {
   const player = getActivePlayer();
   if (!player) return;
   if (!isActive) {
+    clearPlaybackFeedback();
     player.pause();
     player.muted(true);
     return;
@@ -1196,5 +1279,20 @@ function handleWheel(event: WheelEvent) {
 .loading-overlay-leave-to {
   opacity: 0;
   transform: translateY(4px);
+}
+.playback-overlay-enter-active,
+.playback-overlay-leave-active {
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+.playback-overlay-enter-from,
+.playback-overlay-leave-to {
+  opacity: 0;
+  transform: scale(0.8);
+}
+.playback-overlay-leave-active {
+  pointer-events: none;
+}
+.playback-overlay-leave-active > div {
+  pointer-events: none;
 }
 </style>

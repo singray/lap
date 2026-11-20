@@ -22,6 +22,7 @@
       @pointerenter="startMediaPreview"
       @pointerleave="stopMediaPreview"
     >
+      <IconPhoto v-if="!isThumbnailLoaded" class="absolute size-8 text-base-content/25" />
       <!-- image -->
       <img
         v-if="thumbnailSrc"
@@ -30,15 +31,15 @@
         :class="{
           'group-hover:scale-115': shouldScaleThumbnail,
           'scale-115': shouldScaleThumbnail && isSelected,
-          'object-contain': !isGeometryGridStyle && config.settings.grid.scaling === 0,
-          'object-cover': isGeometryGridStyle || config.settings.grid.scaling === 1,
+          'object-contain': fitRawPairPreview || (!isGeometryGridStyle && config.settings.grid.scaling === 0),
+          'object-cover': !fitRawPairPreview && (isGeometryGridStyle || config.settings.grid.scaling === 1),
           'object-fill': !isGeometryGridStyle && config.settings.grid.scaling === 2,
           'transition-all': !isTransitionDisabled && normalizedRotate === 0,
           'opacity-0': !isThumbnailLoaded,
           'opacity-100': isThumbnailLoaded,
         }"
         :style="imgStyle"
-        loading="lazy"
+        loading="eager"
         @load="handleThumbnailLoad"
         @error="retryThumbnail"
       />
@@ -84,6 +85,13 @@
         @error="stopMediaPreview"
       />
 
+      <div v-if="originalUnavailable" class="pointer-events-none absolute right-0.5 bottom-0.5 z-20 thumb-badge" :aria-label="t('offline.original_unavailable')">
+        <IconExclamation class="h-3.5 w-3.5 shrink-0 text-warning/70" />
+      </div>
+      <div v-else-if="file.cloud_only" class="absolute right-0.5 bottom-0.5 z-20 thumb-badge" :title="cloudOnlyLabel" :aria-label="cloudOnlyLabel">
+        <IconCloud class="h-3.5 w-3.5 shrink-0" />
+      </div>
+
       <!-- status badges -->
       <div
         v-if="statusBadges.length > 0"
@@ -96,7 +104,7 @@
         <div
           v-for="badge in statusBadges"
           :key="badge.key"
-          class="thumb-badge thumb-badge-muted"
+          class="thumb-badge"
         >
           <template v-if="badge.icons?.length">
             <div class="flex items-center gap-0.5">
@@ -105,7 +113,6 @@
                 v-for="(entry, index) in badge.icons"
                 :key="`${badge.key}-${index}`"
                 class="h-3.5 w-3.5 shrink-0"
-                :style="entry.style"
               />
             </div>
           </template>
@@ -135,7 +142,7 @@
           hasBottomMediaBadges ? 'bottom-6' : 'bottom-0.5',
         ]"
       >
-        <div class="thumb-badge thumb-badge-muted">
+        <div class="thumb-badge">
           {{ thumbnailBadge }}
         </div>
       </div>
@@ -145,22 +152,23 @@
       >
         <div
           v-if="isLivePhoto || isMotionPhoto"
-          class="thumb-badge thumb-badge-muted"
+          class="thumb-badge"
         >
           <IconLivePhoto class="h-3.5 w-3.5 shrink-0" />
           <span class="leading-none">{{ isLivePhoto ? t('image_viewer.live') : t('image_viewer.motion') }}</span>
         </div>
         <div
           v-if="isRawJpegPair"
-          class="thumb-badge thumb-badge-muted"
+          class="thumb-badge"
         >
           <span class="leading-none">{{ rawJpegPairBadge }}</span>
         </div>
         <div
-          v-if="videoDurationBadge"
-          class="thumb-badge thumb-badge-muted"
+          v-if="file.file_type === 2"
+          class="thumb-badge"
         >
-          {{ videoDurationBadge }}
+          <template v-if="videoDurationBadge">{{ videoDurationBadge }}</template>
+          <IconVideo v-else class="h-3.5 w-3.5 shrink-0" />
         </div>
         <div
           v-if="dedupStatus"
@@ -184,8 +192,7 @@
         </label>
       </div>
 
-      <!-- context menu (non-select only; in select mode all actions live in the
-           always-visible selection panel, so no per-thumbnail menu is shown) -->
+      <!-- per-file menu; multi-select uses the shared context menu -->
       <div v-if="!selectMode" class="absolute right-0.5 top-0.5">
         <ContextMenu
           ref="contextMenuRef"
@@ -232,19 +239,23 @@ import { useI18n } from 'vue-i18n';
 import { useUIStore } from '@/stores/uiStore';
 import { config } from '@/common/config';
 import { THUMBNAIL_BADGE } from '@/common/constants';
-import { isMac, shortenFilename, formatFileSize, formatDimensionText, formatDuration, formatTimestamp, formatCaptureSettings, formatCaptureSettingValue, formatCameraInfo, getAssetSrc, getThumbUrl, getFileExtension } from '@/common/utils';
+import { isMac, shortenFilename, formatFileSize, getMediaItemSize, formatDimensionText, formatVideoDurationBadge, formatTimestamp, formatCaptureSettings, formatCaptureSettingValue, formatCameraInfo, getAssetSrc, getThumbUrl, getFileExtension, formatRawPairBadge } from '@/common/utils';
 import { isWebViewVideoPlaybackDisabled, getGStreamerAvailability } from '@/common/video';
 import { claimHoverPreview, releaseHoverPreview } from '@/common/hoverPreview';
 import ContextMenu from '@/components/ContextMenu.vue';
+import { isOriginalUnavailable } from '@/common/availability';
+import { isCloudOnlyFile } from '@/common/api';
 import { useFileMenuItems } from '@/common/fileMenu';
 
 import { 
   IconMore,
+  IconExclamation,
+  IconCloud,
+  IconPhoto,
+  IconVideo,
   IconHeartFilled,
   IconTag,
-  IconBookmark,
-  IconRotate,
-  IconComment,
+  IconCollection,
   IconStarFilled,
   IconFlagFilled,
   IconFlagOff,
@@ -286,7 +297,8 @@ const emit = defineEmits([
     'clicked',
     'dblclicked',
     'select-toggled',
-    'action'
+    'action',
+    'selection-context-menu',
 ]);
 
 const isTransitionDisabled = ref(false);
@@ -304,19 +316,19 @@ const showVideoPreview = ref(false);
 const isVideoPreviewReady = ref(false);
 const showAnimatedImagePreview = ref(false);
 const isAnimatedImagePreviewReady = ref(false);
+const originalUnavailable = computed(() => isOriginalUnavailable(props.file));
 const isVideoFile = computed(() => props.file?.file_type === 2);
 const isLivePhoto = computed(() => props.file?.media_subtype === 'live_photo' && !!props.file?.live_photo_video_path);
 const isMotionPhoto = computed(() => props.file?.media_subtype === 'motion_photo');
 const isRawJpegPair = computed(() => props.file?.media_subtype === 'raw_jpeg_pair');
-const rawJpegPairBadge = computed(() => {
-  const extension = getFileExtension(props.file?.live_photo_video_path || '').toLowerCase();
-  return ['heic', 'heif', 'hif'].includes(extension) ? 'RAW+HEIC' : 'RAW+JPEG';
-});
+const rawJpegPairBadge = computed(() => formatRawPairBadge(props.file?.live_photo_video_path));
 const previewVideoPath = computed(() => isLivePhoto.value ? props.file.live_photo_video_path : props.file?.file_path);
 const canPreviewVideo = computed(() => (
-  (isVideoFile.value || isLivePhoto.value)
+  !originalUnavailable.value && (isVideoFile.value || isLivePhoto.value)
   && !!previewVideoPath.value
   && !isWebViewVideoPlaybackDisabled(previewVideoPath.value)
+  // The companion video is checked live before playback.
+  && (isLivePhoto.value || !props.file.cloud_only)
 ));
 const ANIMATABLE_IMAGE_EXTENSIONS = new Set(['gif', 'png', 'apng', 'webp', 'avif']);
 const isAnimatableImageFile = computed(() => ANIMATABLE_IMAGE_EXTENSIONS.has(
@@ -324,9 +336,15 @@ const isAnimatableImageFile = computed(() => ANIMATABLE_IMAGE_EXTENSIONS.has(
 ));
 const isGifFile = computed(() => getFileExtension(props.file?.name || props.file?.file_path || '').toLowerCase() === 'gif');
 const animatedImagePreviewSrc = computed(() => getAssetSrc(props.file?.file_path || '', Number(props.file?.modified_at || 0)));
-const canPreviewAnimatedImage = computed(() => isAnimatableImageFile.value && !!animatedImagePreviewSrc.value);
+const canPreviewAnimatedImage = computed(() => !originalUnavailable.value && !props.file?.cloud_only
+  && isAnimatableImageFile.value && !!animatedImagePreviewSrc.value);
 const isGeometryGridStyle = computed(() => config.settings.grid.style === 2 || config.settings.grid.style === 3);
-const shouldScaleThumbnail = computed(() => config.settings.grid.style === 1 || isGeometryGridStyle.value);
+// Pair previews can have a different crop than the RAW dimensions used by layout.
+const fitRawPairPreview = computed(() => isGeometryGridStyle.value && isRawJpegPair.value
+  && config.settings.groupRawJpegPairs && config.settings.rawPairDisplaySource === 'jpeg'
+  && !!props.file?.live_photo_video_path);
+const shouldScaleThumbnail = computed(() => !fitRawPairPreview.value
+  && (config.settings.grid.style === 1 || isGeometryGridStyle.value));
 const thumbnailCornerClass = computed(() => (
   config.settings.grid.thumbnailCorners === 1 ? 'rounded-none' : 'rounded-box'
 ));
@@ -335,7 +353,7 @@ const isThumbnailLoaded = ref(false);
 let thumbnailRetryCount = 0;
 
 watch(
-  () => [props.file?.id, props.file?.thumbnail],
+  [() => props.file?.id, () => props.file?.thumbnail],
   ([, src]) => {
     thumbnailSrc.value = String(src || '');
     isThumbnailLoaded.value = false;
@@ -349,7 +367,8 @@ function handleThumbnailLoad() {
 }
 
 function retryThumbnail() {
-  const isThumbnailProtocol = thumbnailSrc.value.startsWith('thumb://localhost')
+  const isThumbnailProtocol = thumbnailSrc.value.startsWith('data:image/')
+    || thumbnailSrc.value.startsWith('thumb://localhost')
     || thumbnailSrc.value.startsWith('http://thumb.localhost')
     || thumbnailSrc.value.startsWith('https://thumb.localhost');
   if (thumbnailRetryCount > 0 || !isThumbnailProtocol) {
@@ -357,7 +376,8 @@ function retryThumbnail() {
   }
   thumbnailRetryCount++;
   isThumbnailLoaded.value = false;
-  thumbnailSrc.value = getThumbUrl(props.file.id, true, config.settings.thumbnailSize, Number(props.file.modified_at || 0));
+  const retryUrl = getThumbUrl(props.file.id, true, config.settings.thumbnailSize, Number(props.file.modified_at || 0));
+  thumbnailSrc.value = `${retryUrl}${retryUrl.includes('?') ? '&' : '?'}repair=true`;
 }
 
 // Robust ResizeObserver setup using watch to handle v-if
@@ -432,6 +452,8 @@ function startVideoPreview() {
     const available = await getGStreamerAvailability();
     if (request !== videoPreviewRequest || !available) return;
     if (!canPreviewVideo.value || !previewVideoPath.value) return;
+    // The catalog flag can be stale; playing an online-only video would download it.
+    if (await isCloudOnlyFile(previewVideoPath.value) || request !== videoPreviewRequest) return;
 
     isVideoPreviewReady.value = false;
     showVideoPreview.value = true;
@@ -469,18 +491,26 @@ function stopVideoPreview() {
   showVideoPreview.value = false;
 }
 
+let animatedImagePreviewRequest = 0;
+
 function startAnimatedImagePreview() {
   if (!canPreviewAnimatedImage.value || animatedImagePreviewTimer || showAnimatedImagePreview.value) return;
 
+  const request = ++animatedImagePreviewRequest;
+  const filePath = props.file?.file_path || '';
   animatedImagePreviewTimer = setTimeout(() => {
     animatedImagePreviewTimer = null;
     if (!canPreviewAnimatedImage.value) return;
+    // The catalog flag can be stale; loading an online-only image would download it.
+    if (request !== animatedImagePreviewRequest || props.file?.file_path !== filePath
+      || !canPreviewAnimatedImage.value) return;
     isAnimatedImagePreviewReady.value = false;
     showAnimatedImagePreview.value = true;
   }, 400);
 }
 
 function stopAnimatedImagePreview() {
+  animatedImagePreviewRequest++;
   if (animatedImagePreviewTimer) {
     clearTimeout(animatedImagePreviewTimer);
     animatedImagePreviewTimer = null;
@@ -511,9 +541,10 @@ function handleDoubleClick(event: MouseEvent) {
 function handleContextMenu(event: MouseEvent) {
   event.preventDefault();
   event.stopPropagation();
-  // Multi-select actions live in the selection panel (always visible in select
-  // mode) and are left-click only, so no context menu is shown here.
-  if (props.selectMode) return;
+  if (props.selectMode) {
+    emit('selection-context-menu', event);
+    return;
+  }
   if (!props.isSelected) {
     emit('clicked', false);
   }
@@ -581,6 +612,7 @@ const isContentActive = computed(() =>
   uiStore.activePane === 'content' && uiStore.inputStack.length === 0
 );
 const { locale, messages, t } = useI18n();
+const cloudOnlyLabel = computed(() => t(props.file?.metadata_pending ? 'offline.cloud_only_pending' : 'offline.cloud_only'));
 const localeMsg = computed(() => messages.value[locale.value] as any);
 
 const menuItems = useFileMenuItems(
@@ -595,9 +627,9 @@ const getGridLabelText = (file: any, option: number) => {
   switch (option) {
     case 0: return '';
     case 1: return shortenFilename(file.name) || ' ';
-    case 2: return formatFileSize(file.size) || ' ';
+    case 2: return formatFileSize(getMediaItemSize(file)) || ' ';
     case 3: return formatDimensionText(file.width, file.height) || ' ';
-    case 4: return formatTimestamp(file.taken_date, localeMsg.value.format.date_time) || ' ';
+    case 4: return formatTimestamp(file.taken_date, 'date_time') || ' ';
     case 5: return file.geo_name || ' ';
     case 6: return formatCameraInfo(file.e_make, file.e_model) || ' ';
     case 7: return file.e_lens_model || ' ';
@@ -617,7 +649,6 @@ type ThumbnailBadge = {
   icon?: Component;
   icons?: Array<{
     icon: Component;
-    style?: CSSProperties;
   }>;
   label?: string;
   iconClass?: string;
@@ -632,15 +663,7 @@ const normalizedRotate = computed(() => {
   return rotate < 0 ? rotate + 360 : rotate;
 });
 
-const videoDurationBadge = computed(() => {
-  if (props.file?.file_type !== 2) return '';
-
-  const duration = Number(props.file?.duration);
-  if (!Number.isFinite(duration)) return '';
-
-  const formattedDuration = formatDuration(duration);
-  return formattedDuration;
-});
+const videoDurationBadge = computed(() => formatVideoDurationBadge(props.file));
 
 const thumbnailBadge = computed(() => {
   const summary = Number(config.settings.grid.thumbnailBadge || 0);
@@ -649,6 +672,8 @@ const thumbnailBadge = computed(() => {
   const file = props.file || {};
   switch (summary) {
     case THUMBNAIL_BADGE.FILE_FORMAT: {
+      const formatLabel = (file.format_label || '').trim();
+      if (formatLabel) return formatLabel.toUpperCase();
       const extension = getFileExtension(file.name || file.file_path || '').trim();
       return extension ? extension.toUpperCase() : '';
     }
@@ -670,7 +695,7 @@ const thumbnailBadge = computed(() => {
 });
 
 const hasBottomMediaBadges = computed(() => (
-  isLivePhoto.value || isMotionPhoto.value || isRawJpegPair.value || Boolean(videoDurationBadge.value) || Boolean(props.dedupStatus)
+  isLivePhoto.value || isMotionPhoto.value || isRawJpegPair.value || props.file?.file_type === 2 || Boolean(props.dedupStatus)
 ));
 
 const statusBadges = computed<ThumbnailBadge[]>(() => {
@@ -716,14 +741,7 @@ const statusBadges = computed<ThumbnailBadge[]>(() => {
   }
   
   if (props.file.has_tags) metaIcons.push({ icon: IconTag });
-  if (props.file.has_collections) metaIcons.push({ icon: IconBookmark });
-  if (props.file.comments?.length > 0) metaIcons.push({ icon: IconComment });
-  if (normalizedRotate.value > 0) {
-    metaIcons.push({
-      icon: IconRotate,
-      style: { transform: `rotate(${normalizedRotate.value}deg)` },
-    });
-  }
+  if (props.file.has_collections) metaIcons.push({ icon: IconCollection });
   if (metaIcons.length > 0) {
     badges.push({
       key: 'meta',

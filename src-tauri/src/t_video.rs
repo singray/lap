@@ -61,18 +61,6 @@ pub fn init_ffmpeg_path(app: &AppHandle) {
     }
 }
 
-/// Get video url for different platforms
-fn platform_video_url(file_path: &str) -> Result<String, String> {
-    #[cfg(target_os = "linux")]
-    {
-        crate::t_http::make_video_stream_url(file_path)
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        Ok(file_path.to_string())
-    }
-}
-
 /// Manages active FFmpeg/FFprobe processes, allowing per-player cancellation.
 pub struct VideoManager {
     pub active_processes: Mutex<HashMap<String, (u64, tokio::process::Child)>>,
@@ -221,7 +209,7 @@ async fn probe_json_with_timeout(file_path: &str, timeout_secs: u64) -> Result<V
     let mut cmd = ffprobe_command();
 
     cmd.args(["-v", "quiet"]);
-    if crate::t_image::is_heic_path(file_path) {
+    if crate::t_image::is_heic_path(file_path) && find_sidecar(ffprobe_sidecar_name()).is_some() {
         cmd.arg("-show_stream_groups");
     }
     if should_skip_duration_probe(file_path) {
@@ -527,6 +515,8 @@ pub async fn get_video_thumbnail(
     known_duration: Option<u64>,
     seek_percent: Option<u8>,
 ) -> Result<Option<Vec<u8>>, String> {
+    crate::t_utils::require_local_content(std::path::Path::new(file_path))
+        .map_err(|error| error.to_string())?;
     let probe = probe_json_async(file_path).await.ok();
     let stream_map = if crate::t_image::is_heic_path(file_path) {
         heif_primary_image(probe.as_ref().ok_or("Cannot probe HEIF primary image")?)?.0
@@ -679,6 +669,7 @@ fn video_dimensions(video: &Value) -> (u32, u32) {
 }
 
 pub async fn get_video_metadata_async(file_path: &str) -> Result<VideoMetadata, String> {
+    crate::t_utils::require_local_content(std::path::Path::new(file_path)).map_err(|e| e.to_string())?;
     let json = probe_json_with_timeout(file_path, INDEX_PROBE_TIMEOUT_SECS).await?;
 
     if crate::t_image::is_heic_path(file_path) {
@@ -733,32 +724,18 @@ pub async fn get_video_metadata_async(file_path: &str) -> Result<VideoMetadata, 
 
     let content_identifier = first_exist(
         &meta,
-        &[
-            "com.apple.quicktime.content.identifier",
-            "content.identifier",
-            "live-photo-info",
-        ],
+        crate::metadata::schema::APPLE_VIDEO_CONTENT_IDENTIFIER_KEYS,
     )
     .or_else(|| {
         stream_meta.as_ref().and_then(|meta| {
             first_exist(
                 meta,
-                &[
-                    "com.apple.quicktime.content.identifier",
-                    "content.identifier",
-                    "live-photo-info",
-                ],
+                crate::metadata::schema::APPLE_VIDEO_CONTENT_IDENTIFIER_KEYS,
             )
         })
     });
 
-    let e_date_time = first_parseable_date(&meta, &["com.apple.quicktime.creationdate"])
-        .or_else(|| {
-            stream_meta.as_ref().and_then(|meta| {
-                first_parseable_date(meta, &["com.apple.quicktime.creationdate"])
-            })
-        })
-        .or_else(|| first_exist(&meta, &["creation_time"]));
+    let e_date_time = video_capture_date(&meta, stream_meta.as_ref());
 
     Ok(VideoMetadata {
         width: w,
@@ -1031,6 +1008,26 @@ fn first_camera_tag(
         .or_else(|| stream_meta.and_then(|tags| first_exist(tags, generic_keys)))
 }
 
+fn video_capture_date(
+    meta: &HashMap<String, String>,
+    stream_meta: Option<&HashMap<String, String>>,
+) -> Option<String> {
+    first_parseable_date(meta, &["com.apple.quicktime.creationdate"])
+        .or_else(|| stream_meta.and_then(|tags| {
+            first_parseable_date(tags, &["com.apple.quicktime.creationdate"])
+        }))
+        .map(|date| t_utils::metadata_wallclock_date(&date).unwrap_or(date))
+        // UTC-only timestamps have no shoot-site timezone. Convert to system
+        // local time before storing the same naive date format as photos.
+        .or_else(|| first_exist(meta, &["creation_time"]).map(|date| {
+            chrono::DateTime::parse_from_rfc3339(&date).ok().and_then(|dt| {
+                let local = dt.with_timezone(&chrono::Local).format("%Y:%m:%d %H:%M:%S").to_string();
+                // Keep the absolute timestamp during ambiguous DST hours.
+                (t_utils::meta_date_to_timestamp(&local) == Some(dt.timestamp())).then_some(local)
+            }).unwrap_or(date)
+        }))
+}
+
 fn first_parseable_date(meta: &HashMap<String, String>, keys: &[&str]) -> Option<String> {
     first_exist(meta, keys).filter(|value| t_utils::meta_date_to_timestamp(value).is_some())
 }
@@ -1139,6 +1136,7 @@ pub async fn prepare_video(
     force: Option<String>,
     request_id: Option<u64>,
 ) -> Result<VideoPrepareResult, String> {
+    crate::t_utils::require_local_content(std::path::Path::new(&file_path)).map_err(|e| e.to_string())?;
     if is_mpeg_program_stream(&file_path) {
         return Err(EXTERNAL_PLAYER_REQUIRED_ERROR.to_string());
     }
@@ -1200,7 +1198,7 @@ pub async fn prepare_video(
 
     if action == VideoAction::Direct && !force_process && !force_compatible {
         let result = VideoPrepareResult {
-            url: platform_video_url(&file_path)?,
+            url: crate::t_http::make_video_stream_url(&file_path)?,
             action: VideoAction::Direct,
         };
         finish_video_request(&state, &player_id, request_id).await;
@@ -1240,7 +1238,7 @@ pub async fn prepare_video(
     if let Ok(meta) = tokio::fs::metadata(&output_path).await {
         if meta.len() > 32 * 1024 && (force.is_none() || force_compatible) {
             let result = VideoPrepareResult {
-                url: platform_video_url(output_path.to_string_lossy().as_ref())?,
+                url: crate::t_http::make_video_stream_url(output_path.to_string_lossy().as_ref())?,
                 action: current_action,
             };
             finish_video_request(&state, &player_id, request_id).await;
@@ -1395,7 +1393,7 @@ pub async fn prepare_video(
                 let _ = tokio::fs::remove_file(&tmp_path).await;
                 finish_video_request(&state, &player_id, request_id).await;
                 return Ok(VideoPrepareResult {
-                    url: platform_video_url(output_path.to_string_lossy().as_ref())?,
+                    url: crate::t_http::make_video_stream_url(output_path.to_string_lossy().as_ref())?,
                     action: current_action,
                 });
             }
@@ -1410,7 +1408,7 @@ pub async fn prepare_video(
                 });
                 finish_video_request(&state, &player_id, request_id).await;
                 return Ok(VideoPrepareResult {
-                    url: platform_video_url(output_path.to_string_lossy().as_ref())?,
+                    url: crate::t_http::make_video_stream_url(output_path.to_string_lossy().as_ref())?,
                     action: current_action,
                 });
             }
@@ -1501,4 +1499,22 @@ fn hash_id(value: &str) -> u64 {
         h = h.wrapping_mul(0x100000001b3);
     }
     h
+}
+
+#[cfg(test)]
+mod capture_date_tests {
+    use super::*;
+
+    #[test]
+    fn quicktime_z_preserves_wallclock_but_creation_time_converts_utc() {
+        let date = "2019-05-27T11:10:03.000000Z";
+        let quicktime = HashMap::from([("com.apple.quicktime.creationdate".into(), date.into())]);
+        assert_eq!(video_capture_date(&quicktime, None).as_deref(), Some("2019:05:27 11:10:03"));
+        assert_eq!(video_capture_date(&HashMap::new(), Some(&quicktime)), video_capture_date(&quicktime, None));
+
+        let utc = HashMap::from([("creation_time".into(), date.into())]);
+        let expected = chrono::DateTime::parse_from_rfc3339(date).unwrap()
+            .with_timezone(&chrono::Local).format("%Y:%m:%d %H:%M:%S").to_string();
+        assert_eq!(video_capture_date(&utc, None), Some(expected));
+    }
 }

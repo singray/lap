@@ -22,10 +22,11 @@ export default defineConfig({
         ]
     ],
     themeConfig: {
-        logo: '/logo.png',
+        logo: '/icon.png',
         nav: [
             { text: 'Home', link: '/' },
             { text: 'Guide', link: '/guide/introduction' },
+            { text: 'Demo', link: '/demos/lap/index.html', target: '_self' },
             { text: 'Download', link: 'https://github.com/julyx10/lap/releases' }
         ],
         sidebar: [
@@ -39,6 +40,8 @@ export default defineConfig({
             {
                 text: 'Release Notes',
                 items: [
+                    { text: 'v0.4.0', link: '/guide/release-notes/v0.4.0' },
+                    { text: 'v0.3.3', link: '/guide/release-notes/v0.3.3' },
                     { text: 'v0.3.2', link: '/guide/release-notes/v0.3.2' },
                     { text: 'v0.3.1', link: '/guide/release-notes/v0.3.1' },
                     { text: 'v0.3.0', link: '/guide/release-notes/v0.3.0' },

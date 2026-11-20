@@ -22,14 +22,15 @@ export type ShortcutActionId =
   | 'file.openExternalApp'
   | 'file.editImage'
   | 'file.copy'
+  | 'file.copyPath'
   | 'file.paste'
   | 'file.selectAll'
   | 'file.selectNone'
   | 'file.invertSelection'
   | 'file.rename'
   | 'file.moveTo'
-  | 'file.moveToFolder'
   | 'file.trash'
+  | 'file.deletePermanently'
   | 'file.reveal'
   | 'file.searchSimilar'
   | 'meta.favorite'
@@ -44,11 +45,12 @@ export type ShortcutActionId =
   | 'meta.culling.unreviewed'
   | 'meta.tag'
   | 'meta.collection'
-  | 'meta.comment'
+  | 'meta.edit'
   | 'meta.rotate'
   | 'meta.rotateCounterclockwise'
   | 'meta.info'
   | 'view.quickPreview'
+  | 'view.togglePlayback'
   | 'view.close'
   | 'view.next'
   | 'view.previous'
@@ -61,6 +63,9 @@ export type ShortcutActionId =
   | 'view.zoomInDirectional'
   | 'view.zoomOutDirectional'
   | 'view.zoomFit'
+  | 'view.cycleRawPreview'
+  | 'view.toggleAfAreas'
+  | 'view.toggleFullscreen'
   | 'view.cycleBackground'
   | 'view.backgroundTheme'
   | 'view.backgroundBlack'
@@ -68,8 +73,7 @@ export type ShortcutActionId =
   | 'view.backgroundMediumGray'
   | 'view.backgroundLightGray'
   | 'view.backgroundWhite'
-  | 'view.togglePane'
-  | 'slideshow.toggle';
+  | 'view.togglePane';
 
 export type ShortcutModifier = 'ctrl' | 'meta' | 'alt' | 'shift' | 'cmdOrCtrl';
 
@@ -162,7 +166,7 @@ export const SHORTCUTS: readonly ShortcutDefinition[] = [
     id: 'app.search',
     contexts: ['global'],
     defaultBindings: [
-      { code: 'Slash', modifiers: ['cmdOrCtrl'], label: { mac: '⌘/', windows: 'Ctrl+/', linux: 'Ctrl+/' } },
+      { code: 'Slash', modifiers: ['cmdOrCtrl'], allowShift: true, label: { mac: '⌘/', windows: 'Ctrl+/', linux: 'Ctrl+/' } },
     ],
   },
   {
@@ -176,21 +180,30 @@ export const SHORTCUTS: readonly ShortcutDefinition[] = [
     id: 'file.openExternalApp',
     contexts: ['content'],
     defaultBindings: [
-      { code: 'KeyE', modifiers: ['cmdOrCtrl'], label: { mac: '⌘E', windows: 'Ctrl+E', linux: 'Ctrl+E' } },
+      { code: 'KeyE', modifiers: ['cmdOrCtrl', 'shift'], label: { mac: '⇧⌘E', windows: 'Ctrl+Shift+E', linux: 'Ctrl+Shift+E' } },
     ],
   },
   {
     id: 'file.editImage',
     contexts: ['content'],
     defaultBindings: [
-      { code: 'KeyE', allowShift: true, label: 'E' },
+      { code: 'KeyE', modifiers: ['cmdOrCtrl'], label: { mac: '⌘E', windows: 'Ctrl+E', linux: 'Ctrl+E' } },
+    ],
+  },
+  {
+    id: 'file.copyPath',
+    contexts: ['content', 'image-viewer'],
+    defaultBindings: [
+      { code: 'KeyC', modifiers: ['meta', 'alt'], platforms: ['mac'], label: '⌥⌘C' },
+      { code: 'KeyC', modifiers: ['ctrl', 'shift'], platforms: ['windows', 'linux'], label: 'Ctrl+Shift+C' },
     ],
   },
   {
     id: 'file.copy',
     contexts: ['content'],
     defaultBindings: [
-      { code: 'KeyC', modifiers: ['cmdOrCtrl'], allowShift: true, label: { mac: '⌘C', windows: 'Ctrl+C', linux: 'Ctrl+C' } },
+      { code: 'KeyC', modifiers: ['meta'], platforms: ['mac'], allowShift: true, label: '⌘C' },
+      { code: 'KeyC', modifiers: ['ctrl'], platforms: ['windows', 'linux'], label: 'Ctrl+C' },
     ],
   },
   {
@@ -232,19 +245,22 @@ export const SHORTCUTS: readonly ShortcutDefinition[] = [
   {
     id: 'file.moveTo',
     contexts: ['content'],
-    defaultBindings: [{ code: 'KeyM', allowShift: true, label: 'M' }],
-  },
-  {
-    id: 'file.moveToFolder',
-    contexts: ['content'],
     defaultBindings: [{ code: 'KeyM', modifiers: ['cmdOrCtrl', 'shift'], label: { mac: '⇧⌘M', windows: 'Ctrl+Shift+M', linux: 'Ctrl+Shift+M' } }],
   },
   {
     id: 'file.trash',
     contexts: ['content'],
     defaultBindings: [
-      { key: 'Backspace', modifiers: ['meta'], platforms: ['mac'], allowShift: true, label: { mac: '⌘⌫' } },
-      { key: 'Delete', platforms: ['windows', 'linux'], allowShift: true, label: { windows: 'Del', linux: 'Del' } },
+      { key: 'Backspace', modifiers: ['meta'], platforms: ['mac'], label: { mac: '⌘⌫' } },
+      { key: 'Delete', label: { mac: '⌦', windows: 'Del', linux: 'Del' } },
+    ],
+  },
+  {
+    id: 'file.deletePermanently',
+    contexts: ['content'],
+    defaultBindings: [
+      { key: 'Backspace', modifiers: ['meta', 'alt'], platforms: ['mac'], label: { mac: '⌘⌥⌫' } },
+      { key: 'Delete', modifiers: ['shift'], platforms: ['windows', 'linux'], label: { windows: 'Shift+Del', linux: 'Shift+Del' } },
     ],
   },
   {
@@ -267,37 +283,55 @@ export const SHORTCUTS: readonly ShortcutDefinition[] = [
   {
     id: 'meta.rating.clear',
     contexts: ['content', 'media-viewer', 'image-viewer'],
-    defaultBindings: [{ key: '0', label: '0' }],
+    defaultBindings: [
+      { key: '0', label: '0' },
+      { code: 'Digit0', modifiers: ['shift'], label: { mac: '⇧0', windows: 'Shift+0', linux: 'Shift+0' } },
+    ],
   },
   {
     id: 'meta.rating.one',
     contexts: ['content', 'media-viewer', 'image-viewer'],
-    defaultBindings: [{ key: '1', label: '1' }],
+    defaultBindings: [
+      { key: '1', label: '1' },
+      { code: 'Digit1', modifiers: ['shift'], label: { mac: '⇧1', windows: 'Shift+1', linux: 'Shift+1' } },
+    ],
   },
   {
     id: 'meta.rating.two',
     contexts: ['content', 'media-viewer', 'image-viewer'],
-    defaultBindings: [{ key: '2', label: '2' }],
+    defaultBindings: [
+      { key: '2', label: '2' },
+      { code: 'Digit2', modifiers: ['shift'], label: { mac: '⇧2', windows: 'Shift+2', linux: 'Shift+2' } },
+    ],
   },
   {
     id: 'meta.rating.three',
     contexts: ['content', 'media-viewer', 'image-viewer'],
-    defaultBindings: [{ key: '3', label: '3' }],
+    defaultBindings: [
+      { key: '3', label: '3' },
+      { code: 'Digit3', modifiers: ['shift'], label: { mac: '⇧3', windows: 'Shift+3', linux: 'Shift+3' } },
+    ],
   },
   {
     id: 'meta.rating.four',
     contexts: ['content', 'media-viewer', 'image-viewer'],
-    defaultBindings: [{ key: '4', label: '4' }],
+    defaultBindings: [
+      { key: '4', label: '4' },
+      { code: 'Digit4', modifiers: ['shift'], label: { mac: '⇧4', windows: 'Shift+4', linux: 'Shift+4' } },
+    ],
   },
   {
     id: 'meta.rating.five',
     contexts: ['content', 'media-viewer', 'image-viewer'],
-    defaultBindings: [{ key: '5', label: '5' }],
+    defaultBindings: [
+      { key: '5', label: '5' },
+      { code: 'Digit5', modifiers: ['shift'], label: { mac: '⇧5', windows: 'Shift+5', linux: 'Shift+5' } },
+    ],
   },
   {
     id: 'meta.culling.pick',
     contexts: ['content', 'media-viewer', 'image-viewer'],
-    defaultBindings: [{ code: 'KeyP', label: 'P' }],
+    defaultBindings: [{ code: 'KeyP', allowShift: true, label: 'P' }],
   },
   {
     id: 'meta.culling.reject',
@@ -320,9 +354,9 @@ export const SHORTCUTS: readonly ShortcutDefinition[] = [
     defaultBindings: [{ code: 'KeyB', label: 'B' }],
   },
   {
-    id: 'meta.comment',
+    id: 'meta.edit',
     contexts: ['content', 'media-viewer', 'image-viewer'],
-    defaultBindings: [{ code: 'KeyC', allowShift: true, label: 'C' }],
+    defaultBindings: [{ code: 'KeyM', label: 'M' }],
   },
   {
     id: 'meta.rotate',
@@ -338,8 +372,7 @@ export const SHORTCUTS: readonly ShortcutDefinition[] = [
     id: 'meta.info',
     contexts: ['content', 'media-viewer'],
     defaultBindings: [
-      { code: 'KeyI', allowShift: true, label: 'I' },
-      { code: 'KeyI', modifiers: ['cmdOrCtrl'], allowShift: true, label: { mac: '⌘I', windows: 'Ctrl+I', linux: 'Ctrl+I' } },
+      { code: 'KeyI', label: 'I' },
     ],
   },
   {
@@ -355,6 +388,11 @@ export const SHORTCUTS: readonly ShortcutDefinition[] = [
     id: 'view.close',
     contexts: ['content', 'image-viewer', 'settings'],
     defaultBindings: [{ key: 'Escape', label: 'Esc' }],
+  },
+  {
+    id: 'view.togglePlayback',
+    contexts: ['content', 'media-viewer', 'image-viewer'],
+    defaultBindings: [{ key: ' ', label: 'Space' }, { key: 'Space', label: 'Space' }],
   },
   {
     id: 'view.next',
@@ -415,10 +453,25 @@ export const SHORTCUTS: readonly ShortcutDefinition[] = [
   {
     id: 'view.zoomFit',
     contexts: ['content', 'media-viewer', 'image-viewer'],
+    defaultBindings: [{ code: 'KeyZ', label: 'Z' }],
+  },
+  {
+    id: 'view.cycleRawPreview',
+    contexts: ['content', 'media-viewer', 'image-viewer'],
+    defaultBindings: [{ code: 'KeyR', modifiers: ['alt'], label: { mac: '⌥R', windows: 'Alt+R', linux: 'Alt+R' } }],
+  },
+  {
+    id: 'view.toggleFullscreen',
+    contexts: ['content', 'media-viewer', 'image-viewer'],
     defaultBindings: [
-      { key: ' ', label: 'Space' },
-      { key: 'Space', label: 'Space' },
+      { code: 'KeyF', modifiers: ['ctrl', 'meta'], platforms: ['mac'], label: '⌃⌘F' },
+      { key: 'F11', platforms: ['windows', 'linux'], label: 'F11' },
     ],
+  },
+  {
+    id: 'view.toggleAfAreas',
+    contexts: ['content', 'media-viewer', 'image-viewer'],
+    defaultBindings: [{ code: 'KeyA', modifiers: ['alt'], label: { mac: '⌥A', windows: 'Alt+A', linux: 'Alt+A' } }],
   },
   {
     id: 'view.cycleBackground',
@@ -427,33 +480,17 @@ export const SHORTCUTS: readonly ShortcutDefinition[] = [
       { code: 'KeyB', modifiers: ['shift'], label: { mac: '⇧B', windows: 'Shift+B', linux: 'Shift+B' } },
     ],
   },
-  ...VIEW_BACKGROUND_SHORTCUTS.map(({ actionId, value }) => ({
+  ...VIEW_BACKGROUND_SHORTCUTS.map(({ actionId }) => ({
     id: actionId,
     contexts: ['content', 'media-viewer', 'image-viewer'] as const,
-    defaultBindings: [
-      {
-        code: `Digit${value + 1}`,
-        modifiers: ['shift'] as const,
-        label: { mac: `⇧${value + 1}`, windows: `Shift+${value + 1}`, linux: `Shift+${value + 1}` },
-      },
-    ],
+    defaultBindings: [],
   })),
   {
     id: 'view.togglePane',
     contexts: ['image-viewer'],
     defaultBindings: [{ key: 'Tab', label: 'Tab' }],
   },
-  {
-    id: 'slideshow.toggle',
-    contexts: ['content', 'media-viewer', 'image-viewer'],
-    defaultBindings: [
-      {
-        code: 'KeyP',
-        modifiers: ['shift'],
-        label: { mac: '⇧P', windows: 'Shift+P', linux: 'Shift+P' },
-      },
-    ],
-  },
+
 ] as const;
 
 const shortcutMap = new Map<ShortcutActionId, ShortcutDefinition>(
@@ -569,7 +606,7 @@ function matchesBinding(
 ): boolean {
   if (!isBindingAvailableOnPlatform(binding, platform)) return false;
   if (binding.key && event.key !== binding.key) return false;
-  if (binding.code && event.code !== binding.code) return false;
+  if (binding.code && !matchesKeyCode(binding.code, event)) return false;
 
   const modifiers = new Set(binding.modifiers ?? []);
   const expectsCtrl = modifiers.has('ctrl') || (modifiers.has('cmdOrCtrl') && platform !== 'mac');
@@ -585,4 +622,36 @@ function matchesBinding(
 
 function isBindingAvailableOnPlatform(binding: ShortcutBinding, platform: ShortcutPlatform): boolean {
   return !binding.platforms || binding.platforms.includes(platform);
+}
+
+// Bindings match the character the active layout produces, not the physical
+// QWERTY slot of event.code. On AZERTY the key labelled "Q" sits on the
+// physical KeyA position, so matching by code made Cmd-Q trigger Select All
+// (and swallowed the system quit accelerator); the comma lives on the
+// physical Semicolon slot, breaking Cmd-, too. Latin layouts (including
+// Dvorak and Colemak) therefore match by character; non-Latin layouts
+// (Cyrillic, Greek, ...) fall back to the physical key so shortcuts stay
+// reachable when event.key is not an ASCII character. Digits keep physical
+// matching because shifted digit slots produce symbols, not digits.
+const CODE_CHAR: Record<string, string> = {
+  Comma: ',',
+  Period: '.',
+  Slash: '/',
+  Semicolon: ';',
+  Quote: "'",
+  Backquote: '`',
+  Backslash: '\\',
+  BracketLeft: '[',
+  BracketRight: ']',
+  Minus: '-',
+  Equal: '=',
+};
+
+function matchesKeyCode(code: string, event: ShortcutEventLike): boolean {
+  const expected = /^Key([A-Z])$/.exec(code)?.[1]?.toLowerCase() ?? CODE_CHAR[code];
+  const key = event.key ?? '';
+  if (expected && key.length === 1 && /[\x20-\x7E]/.test(key)) {
+    return key.toLowerCase() === expected;
+  }
+  return event.code === code;
 }

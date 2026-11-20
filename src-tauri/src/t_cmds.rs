@@ -7,7 +7,8 @@
 use crate::t_config::{self, AppConfig, Library, LibraryInfo, LibraryState};
 use crate::t_face;
 use crate::t_image;
-use crate::t_apple_sidecar::{
+use crate::t_montage;
+use crate::metadata::apple_sidecar::{
     apple_aae_sidecar_paths, build_apple_sidecar_rename_plan,
     collect_original_rename_db_names, collect_replaced_file_ids_for_targets,
     delete_apple_aae_sidecars, preflight_rename_plan, resolve_group_primary_target,
@@ -22,6 +23,7 @@ use crate::t_sqlite::{
 use crate::t_storage;
 use crate::t_utils;
 use crate::{t_ai, t_common, t_sqlite};
+use crate::t_raw_display::RawDisplayOptions;
 
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -29,12 +31,37 @@ use std::fs;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Emitter, State};
+use std::sync::{Arc, Mutex, RwLock};
+use tauri::{AppHandle, Emitter, Manager, State};
 
-// Serialize a scoped metadata refresh with library switching. A refresh may
-// open several connections, all of which must resolve to the same library.
-static FILE_REFRESH_LIBRARY_LOCK: Mutex<()> = Mutex::new(());
+// Scoped refreshes and RAW thumbnail requests can open several connections.
+// Keep their library stable until all reads and writes have completed.
+static FILE_REFRESH_LIBRARY_LOCK: RwLock<()> = RwLock::new(());
+
+// Linux serves clipboard data from its owner; keep it alive between commands.
+// Serialize writes from the main window and separate viewer windows.
+static FILE_PATH_CLIPBOARD: Mutex<Option<arboard::Clipboard>> = Mutex::new(None);
+
+fn with_library_context<T>(
+    lock: &RwLock<()>,
+    library_id: &str,
+    current_library: impl FnOnce() -> Result<String, String>,
+    operation: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    let _guard = lock.read().map_err(|e| e.to_string())?;
+    if current_library()? != library_id {
+        return Err("Library changed".to_string());
+    }
+    operation()
+}
+
+pub(crate) fn with_current_library<T>(
+    library_id: &str,
+    operation: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    with_library_context(&FILE_REFRESH_LIBRARY_LOCK, library_id,
+        t_config::current_library_id, operation)
+}
 
 // cancellation token for indexing
 pub struct IndexCancellation(pub Arc<Mutex<HashMap<i64, bool>>>);
@@ -62,10 +89,6 @@ struct ImportOrganizeFinished {
 #[serde(rename_all = "camelCase")]
 pub struct ThumbRequest {
     pub file_id: i64,
-    pub file_path: Option<String>,
-    pub file_type: Option<i64>,
-    pub orientation: Option<i32>,
-    pub album_id: Option<i64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -87,6 +110,71 @@ pub struct SupportedFormatExtensions {
 // build info
 include!(concat!(env!("OUT_DIR"), "/build_info.rs"));
 
+// system region
+
+/// Read the region used for dates and times, independently of UI language.
+#[tauri::command]
+pub fn get_system_region_locale() -> Result<Option<String>, String> {
+    #[cfg(target_os = "windows")]
+    {
+        use windows::Win32::Globalization::GetUserDefaultLocaleName;
+
+        // LOCALE_NAME_MAX_LENGTH includes the terminating null character.
+        let mut name = [0u16; 85];
+        // SAFETY: the API receives a writable slice and its exact capacity.
+        let length = unsafe { GetUserDefaultLocaleName(&mut name) };
+        if length == 0 {
+            return Err(std::io::Error::last_os_error().to_string());
+        }
+        String::from_utf16(&name[..length as usize - 1])
+            .map(Some)
+            .map_err(|error| error.to_string())
+    }
+    #[cfg(target_os = "macos")]
+    {
+        use objc2_foundation::NSLocale;
+
+        // currentLocale includes the user's region; preferredLanguages does not.
+        let identifier = NSLocale::currentLocale().localeIdentifier().to_string();
+        Ok(normalize_locale_identifier(&identifier))
+    }
+    #[cfg(target_os = "linux")]
+    {
+        Ok(time_locale_from_env(|key| std::env::var(key).ok()))
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    {
+        Ok(None)
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
+fn normalize_locale_identifier(identifier: &str) -> Option<String> {
+    let identifier = identifier.trim();
+    if identifier.is_empty() {
+        return None;
+    }
+    // POSIX encoding suffixes and legacy locale modifiers are not BCP-47 tags.
+    let base = identifier.split(['.', '@']).next()?;
+    if base == "C" || base == "POSIX" {
+        // Intl has no C locale; use English as its formatting approximation.
+        return Some("en-US".to_string());
+    }
+    if base.is_empty() {
+        return None;
+    }
+    Some(base.replace('_', "-"))
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn time_locale_from_env(mut get: impl FnMut(&str) -> Option<String>) -> Option<String> {
+    // LANGUAGE and LC_MESSAGES affect translations, not date/time formatting.
+    ["LC_ALL", "LC_TIME", "LANG"]
+        .into_iter()
+        .find_map(|key| get(key).filter(|value| !value.trim().is_empty()))
+        .and_then(|value| normalize_locale_identifier(&value))
+}
+
 // library
 
 /// get app config (libraries list and current library)
@@ -95,89 +183,13 @@ pub fn get_app_config() -> Result<AppConfig, String> {
     t_config::load_app_config()
 }
 
-fn extension_description(ext: &str) -> &'static str {
-    match ext {
-        "3fr" => "Hasselblad RAW",
-        "3gp" => "3GPP Multimedia",
-        "arw" => "Sony Alpha RAW",
-        "asf" => "Advanced Systems Format",
-        "avi" => "Audio Video Interleave",
-        "avif" => "AV1 Image File Format",
-        "bmp" => "Bitmap Image File",
-        "cr2" => "Canon RAW 2",
-        "cr3" => "Canon RAW 3",
-        "crw" => "Canon RAW",
-        "dcr" => "Kodak RAW",
-        "dds" => "DirectDraw Surface",
-        "dng" => "Digital Negative",
-        "dpx" => "Digital Picture Exchange",
-        "erf" => "Epson RAW",
-        "exr" => "OpenEXR High Dynamic Range Image",
-        "flv" => "Flash Video",
-        "gif" => "Graphics Interchange Format",
-        "hdr" => "Radiance High Dynamic Range Image",
-        "heic" => "High Efficiency Image Container",
-        "heif" => "High Efficiency Image File",
-        "hevc" => "High Efficiency Video Coding",
-        "hif" => "HEIF Image File",
-        "j2c" => "JPEG 2000 Codestream",
-        "j2k" => "JPEG 2000 Codestream",
-        "jp2" => "JPEG 2000 Image",
-        "jpc" => "JPEG 2000 Codestream",
-        "jpeg" => "Joint Photographic Experts Group",
-        "jfif" => "JPEG File Interchange Format",
-        "jpf" => "JPEG 2000 Image",
-        "jpg" => "Joint Photographic Experts Group",
-        "jpx" => "JPEG 2000 Extended Image",
-        "jxl" => "JPEG XL",
-        "kdc" => "Kodak Digital Camera RAW",
-        "m2ts" => "Blu-ray BDAV Video",
-        "m4v" => "MPEG-4 Video",
-        "mdc" => "Minolta RAW",
-        "mef" => "Mamiya RAW",
-        "mkv" => "Matroska Video",
-        "mod" => "Camcorder Video",
-        "mos" => "Leaf RAW",
-        "mov" => "QuickTime Movie",
-        "mp4" => "MPEG-4 Video",
-        "mpeg" => "Moving Picture Experts Group Video",
-        "mpg" => "MPEG Video",
-        "mrw" => "Minolta RAW",
-        "mts" => "AVCHD Video",
-        "nef" => "Nikon Electronic Format",
-        "nrw" => "Nikon RAW",
-        "orf" => "Olympus RAW Format",
-        "pef" => "Pentax Electronic File",
-        "png" => "Portable Network Graphics",
-        "psd" => "Photoshop Document",
-        "qoi" => "Quite OK Image",
-        "raf" => "Fujifilm RAW",
-        "raw" => "Generic Camera RAW",
-        "rgbe" => "Radiance RGBE Image",
-        "rw2" => "Panasonic RAW 2",
-        "rwl" => "Leica RAW",
-        "sr2" => "Sony RAW 2",
-        "srf" => "Sony RAW Format",
-        "srw" => "Samsung RAW",
-        "tga" => "Truevision Targa Image",
-        "tif" => "Tagged Image File",
-        "tiff" => "Tagged Image File Format",
-        "tod" => "JVC HD Camcorder Video",
-        "ts" => "MPEG Transport Stream",
-        "webm" => "WebM Video",
-        "webp" => "Web Picture Format",
-        "wmv" => "Windows Media Video",
-        _ => "File Format",
-    }
-}
-
 fn extension_option(ext: &str) -> ExtensionOption {
     ExtensionOption {
         value: ext.to_string(),
         label: format!(
             "{} ({})",
             ext.to_ascii_uppercase(),
-            extension_description(ext)
+            t_common::extension_description(ext)
         ),
     }
 }
@@ -188,6 +200,7 @@ pub fn get_supported_format_extensions() -> SupportedFormatExtensions {
     let image: Vec<String> = t_common::NORMAL_IMGS
         .iter()
         .chain(t_common::FFMPEG_BACKED_IMGS.iter())
+        .chain(t_common::AFFINITY_IMGS.iter())
         .map(|ext| ext.to_string())
         .collect();
     let raw: Vec<String> = t_common::RAW_IMGS
@@ -256,27 +269,58 @@ fn gstreamer_element_missing(exit_code: Option<i32>, stderr: &[u8]) -> bool {
             line.trim() == "No such element or plugin 'autoaudiosink'")
 }
 
-#[cfg(test)]
-mod gstreamer_probe_tests {
-    use super::gstreamer_element_missing;
-
-    #[test]
-    fn only_explicit_missing_element_disables_preview() {
-        let missing = b"No such element or plugin 'autoaudiosink'\n";
-        assert!(gstreamer_element_missing(Some(255), missing));
-        assert!(!gstreamer_element_missing(Some(0), missing));
-        assert!(!gstreamer_element_missing(None, missing));
-        assert!(!gstreamer_element_missing(Some(127), b"error while loading shared libraries"));
-        assert!(!gstreamer_element_missing(Some(1), b"unknown failure"));
-    }
-}
-
 /// set last selected item index
 #[tauri::command]
 pub fn set_last_selected_item_index(index: i64) -> Result<(), String> {
-    let mut config = t_config::load_app_config()?;
-    config.last_selected_item_index = index;
-    t_config::save_app_config(&config)
+    t_config::update_app_config(|config| {
+        config.last_selected_item_index = index;
+        Ok(())
+    })
+}
+
+#[tauri::command]
+pub fn get_thumbnail_cache_location() -> Result<crate::t_cache_storage::CacheLocation, String> {
+    crate::t_cache_storage::location()
+}
+
+#[tauri::command]
+pub async fn get_thumbnail_cache_migration_count() -> Result<u64, crate::t_cache_storage::CacheChangeError> {
+    tauri::async_runtime::spawn_blocking(crate::t_cache_storage::migration_file_count)
+        .await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn change_thumbnail_cache_location(
+    new_dir: Option<String>,
+    operation_id: String,
+    allow_missing_source: Option<bool>,
+    on_progress: tauri::ipc::Channel<crate::t_cache_storage::CacheProgress>,
+    status_state: State<'_, t_face::FaceIndexingStatus>,
+) -> Result<crate::t_cache_storage::CacheChangeResult, crate::t_cache_storage::CacheChangeError> {
+    ensure_db_storage_change_allowed(&status_state)?;
+    let operation = crate::t_cache_storage::MigrationOperation::begin(operation_id)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let _guard = cache_migration_library_guard(&operation.cancellation)?;
+        crate::t_cache_storage::change(new_dir, allow_missing_source.unwrap_or(false), &operation.cancellation, |progress| { let _ = on_progress.send(progress); })
+    }).await.map_err(|e| e.to_string())?
+}
+
+fn cache_migration_library_guard(
+    cancellation: &crate::t_cache_storage::MigrationCancellation,
+) -> Result<std::sync::RwLockWriteGuard<'static, ()>, crate::t_cache_storage::CacheChangeError> {
+    loop {
+        cancellation.check()?;
+        match FILE_REFRESH_LIBRARY_LOCK.try_write() {
+            Ok(guard) => return Ok(guard),
+            Err(std::sync::TryLockError::WouldBlock) => std::thread::sleep(std::time::Duration::from_millis(50)),
+            Err(error) => return Err(error.to_string().into()),
+        }
+    }
+}
+
+#[tauri::command]
+pub fn cancel_thumbnail_cache_migration(operation_id: String) -> Result<bool, String> {
+    crate::t_cache_storage::cancel_migration(&operation_id)
 }
 
 #[tauri::command]
@@ -320,28 +364,34 @@ fn ensure_db_storage_change_allowed(
 }
 
 #[tauri::command]
-pub fn change_db_storage_dir(
-    new_dir: &str,
-    status_state: State<t_face::FaceIndexingStatus>,
-) -> Result<String, String> {
+pub async fn change_db_storage_dir(
+    new_dir: String,
+    status_state: State<'_, t_face::FaceIndexingStatus>,
+) -> Result<t_storage::DbStorageChangeResult, String> {
     ensure_db_storage_change_allowed(&status_state)?;
-    let result = t_storage::change_db_storage_dir(new_dir);
-    if result.is_ok() {
-        revalidate_db_after_path_change();
-    }
-    result
+    tauri::async_runtime::spawn_blocking(move || {
+        let _guard = FILE_REFRESH_LIBRARY_LOCK.write().map_err(|e| e.to_string())?;
+        let result = t_storage::change_db_storage_dir(&new_dir);
+        if result.is_ok() {
+            revalidate_db_after_path_change();
+        }
+        result
+    }).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub fn reset_db_storage_dir(
-    status_state: State<t_face::FaceIndexingStatus>,
-) -> Result<String, String> {
+pub async fn reset_db_storage_dir(
+    status_state: State<'_, t_face::FaceIndexingStatus>,
+) -> Result<t_storage::DbStorageChangeResult, String> {
     ensure_db_storage_change_allowed(&status_state)?;
-    let result = t_storage::reset_db_storage_dir();
-    if result.is_ok() {
-        revalidate_db_after_path_change();
-    }
-    result
+    tauri::async_runtime::spawn_blocking(move || {
+        let _guard = FILE_REFRESH_LIBRARY_LOCK.write().map_err(|e| e.to_string())?;
+        let result = t_storage::reset_db_storage_dir();
+        if result.is_ok() {
+            revalidate_db_after_path_change();
+        }
+        result
+    }).await.map_err(|e| e.to_string())?
 }
 
 /// The db file moved to a new path without going through switch_library, so drop stale pooled
@@ -380,8 +430,11 @@ pub fn edit_library(id: &str, name: &str) -> Result<(), String> {
 
 /// remove a library (also deletes the database file)
 #[tauri::command]
-pub fn remove_library(id: &str) -> Result<(), String> {
-    t_config::remove_library(id)
+pub async fn remove_library(id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let _guard = FILE_REFRESH_LIBRARY_LOCK.write().map_err(|e| e.to_string())?;
+        t_config::remove_library(&id)
+    }).await.map_err(|e| e.to_string())?
 }
 
 /// Startup integrity check result for the selected library.
@@ -397,7 +450,7 @@ pub async fn switch_library(app_handle: tauri::AppHandle, id: String) -> Result<
     // create_db's returned error itself rather than re-reading the process-global flag afterwards
     // (which a concurrent switch could resolve against a different library).
     let corrupted = tauri::async_runtime::spawn_blocking(move || -> Result<bool, String> {
-        let _guard = FILE_REFRESH_LIBRARY_LOCK.lock().map_err(|e| e.to_string())?;
+        let _guard = FILE_REFRESH_LIBRARY_LOCK.write().map_err(|e| e.to_string())?;
         t_config::switch_library(&id)?;
         t_utils::clear_album_accessibility();
         t_sqlite::clear_conn_pool();
@@ -482,7 +535,10 @@ pub fn get_all_albums(refresh_accessibility: bool) -> Result<Vec<Album>, String>
 
 /// Get the indexed folder records used by the album sidebar search.
 #[tauri::command]
-pub fn get_all_album_folders() -> Result<Vec<AFolder>, String> {
+pub fn get_all_album_folders(include_excluded: Option<bool>) -> Result<Vec<AFolder>, String> {
+    if include_excluded == Some(true) {
+        return AFolder::get_all();
+    }
     let albums = Album::get_all_albums()?;
     Ok(AFolder::get_all()?.into_iter().filter(|folder| albums.iter()
         .find(|album| album.id == Some(folder.album_id))
@@ -510,11 +566,21 @@ pub fn get_album(album_id: i64) -> Result<Album, String> {
 
 /// Recheck one album root when the user selects that album or one of its folders.
 #[tauri::command]
-pub fn check_album_accessibility(album_id: i64) -> Result<bool, String> {
-    let mut album = Album::get_album_by_id(album_id)
-        .map_err(|e| format!("Error while checking album accessibility: {}", e))?;
-    t_utils::refresh_album_accessibility(&mut album);
-    Ok(album.is_accessible)
+pub async fn check_album_accessibility(album_id: i64) -> Result<bool, String> {
+    let library_id = t_config::current_library_id()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let (mut album, generation) = with_current_library(&library_id, || {
+            let album = Album::get_album_by_id(album_id)
+                .map_err(|e| format!("Error while checking album accessibility: {}", e))?;
+            Ok((album, t_utils::album_accessibility_generation()))
+        })?;
+        // Network I/O must not hold the library-switch lock. Ignore stale probes.
+        t_utils::refresh_album_accessibility_if_current(&mut album, generation);
+        if generation != t_utils::album_accessibility_generation() {
+            return Err("Library changed".to_string());
+        }
+        Ok(album.is_accessible)
+    }).await.map_err(|e| format!("Album accessibility check failed: {e}"))?
 }
 
 /// recount files for an album and return updated album
@@ -603,12 +669,8 @@ pub async fn remove_album(state: State<'_, IndexCancellation>, id: i64) -> Resul
     let library_id = crate::t_config::load_app_config()
         .map(|c| c.current_library_id)
         .unwrap_or_else(|_| "default".to_string());
-    let album_cache_dir = crate::t_config::get_app_cache_dir()
-        .map(|dir| dir.join(library_id).join(id.to_string()))
-        .map_err(|e| format!("Error while resolving album thumbnail cache path: {}", e))?;
-    if album_cache_dir.exists() {
-        std::fs::remove_dir_all(&album_cache_dir)
-            .map_err(|e| format!("Error while removing album thumbnail cache: {}", e))?;
+    if let Err(error) = crate::t_cache_storage::remove_album_cache(&library_id, id) {
+        eprintln!("Album {id} was removed, but its thumbnail cache could not be cleaned: {error}");
     }
 
     Ok(result)
@@ -633,10 +695,11 @@ pub fn index_album(
     state: State<IndexCancellation>,
     album_id: i64,
     thumbnail_size: u32,
-    raw_thumbnail_source: String,
+    raw_display_options: RawDisplayOptions,
     skip_file_path: Option<String>,
     group_raw_jpeg_pairs: bool,
 ) -> Result<(), String> {
+    let library_id = t_config::current_library_id()?;
     // Reset cancellation flag
     state.0.lock().unwrap().insert(album_id, false);
     let cancellation_token = state.0.clone();
@@ -645,9 +708,10 @@ pub fn index_album(
         if let Err(e) = t_utils::index_album_worker(
             &app_handle,
             cancellation_token,
+            library_id,
             album_id,
             thumbnail_size,
-            raw_thumbnail_source == "embedded",
+            raw_display_options,
             skip_file_path,
             group_raw_jpeg_pairs,
         )
@@ -902,26 +966,246 @@ pub fn copy_folder(
     transfer.finalize()
 }
 
-/// delete a folder (move to trash)
-#[tauri::command]
-pub fn delete_folder(folder_path: &str) -> Result<usize, String> {
-    // trash the folder
-    if t_utils::trash_path(folder_path).is_err() {
-        return Ok(0);
+// Resolve the recorded folder's owning album before any filesystem mutation.
+// Never allow deleting an album root (or a directory containing another root).
+fn validate_folder_delete(folder_path: &str, library_id: &str) -> Result<(), String> {
+    let path = Path::new(folder_path);
+    if !path.is_absolute() || path.components().any(|part| matches!(part, std::path::Component::ParentDir)) {
+        return Err("Invalid folder deletion path".into());
+    }
+    let metadata = fs::symlink_metadata(path).map_err(|e| e.to_string())?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err("Folder deletion requires a regular directory".into());
+    }
+    let target = fs::canonicalize(path).map_err(|e| e.to_string())?;
+    let folder = AFolder::fetch(folder_path)?.ok_or("Folder is not in the current library")?;
+    let albums = Album::get_all_albums()?;
+    let album = albums.iter().find(|album| album.id == Some(folder.album_id))
+        .ok_or("Folder has no owning album")?;
+    let root = fs::canonicalize(&album.path).map_err(|e| e.to_string())?;
+    if target == root || !target.starts_with(&root) {
+        return Err("Cannot delete an album root or a folder outside its album".into());
+    }
+    // Check recorded roots without probing unrelated disks or offline NAS mounts.
+    for album in &albums {
+        if folder_delete_contains(path, Path::new(&album.path))
+            || folder_delete_contains(&target, Path::new(&album.path)) {
+            return Err("Cannot delete a directory containing an album root".into());
+        }
+    }
+    let db_path = t_storage::get_library_db_path(library_id)?;
+    let db_path = fs::canonicalize(db_path).map_err(|e| e.to_string())?;
+    if db_path.starts_with(&target) {
+        return Err("Cannot delete a directory containing the library database".into());
+    }
+    Ok(())
+}
+
+fn folder_delete_contains(parent: &Path, child: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        let normalize = |path: &Path| {
+            let path = path.to_string_lossy().replace('/', "\\").to_lowercase();
+            PathBuf::from(path.strip_prefix("\\\\?\\unc\\").map(|rest| format!("\\\\{rest}"))
+                .unwrap_or_else(|| path.strip_prefix("\\\\?\\").unwrap_or(&path).to_string()))
+        };
+        normalize(child).starts_with(normalize(parent))
+    }
+    #[cfg(not(windows))]
+    child.starts_with(parent)
+}
+
+#[cfg(test)]
+mod folder_delete_path_tests {
+    use super::folder_delete_contains;
+    use std::path::Path;
+
+    #[test]
+    fn protects_roots_and_nested_roots_without_matching_sibling_prefixes() {
+        assert!(folder_delete_contains(Path::new("/album/folder"), Path::new("/album/folder")));
+        assert!(folder_delete_contains(Path::new("/album/folder"), Path::new("/album/folder/nested")));
+        assert!(!folder_delete_contains(Path::new("/album/folder"), Path::new("/album/folder-other")));
+        assert!(!folder_delete_contains(Path::new("/album/folder"), Path::new("/offline-nas/album")));
     }
 
-    // delete the folder and all children from db
-    AFolder::delete_folder(folder_path)
-        .map_err(|e| format!("Error while deleting folder from DB: {}", e))
+    #[cfg(windows)]
+    #[test]
+    fn matches_windows_case_separators_and_extended_paths() {
+        assert!(folder_delete_contains(Path::new(r"C:\Photos\Child"), Path::new("c:/photos/child/Album")));
+        assert!(folder_delete_contains(Path::new(r"\\?\C:\Photos\Child"), Path::new(r"C:\Photos\Child\Album")));
+        assert!(folder_delete_contains(Path::new(r"\\?\UNC\NAS\Photos"), Path::new(r"\\nas\photos\Album")));
+    }
+}
+
+/// delete a folder (move to trash)
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderTrashResult {
+    deleted_count: usize,
+    can_delete_permanently: bool,
+    may_have_partially_completed: bool,
+    error: Option<String>,
+}
+
+#[cfg(windows)]
+fn folder_is_on_network_drive(path: &str) -> Result<bool, String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::{core::PCWSTR, Win32::Storage::FileSystem::{GetDriveTypeW, GetVolumePathNameW}};
+    let path: Vec<u16> = std::ffi::OsStr::new(path).encode_wide().chain(Some(0)).collect();
+    let mut root = vec![0u16; 32768];
+    unsafe {
+        GetVolumePathNameW(PCWSTR(path.as_ptr()), &mut root).map_err(|e| e.to_string())?;
+        // DRIVE_REMOTE (4): a network volume, including mapped drive letters.
+        Ok(GetDriveTypeW(PCWSTR(root.as_ptr())) == 4)
+    }
+}
+
+fn folder_trash_allows_permanent_delete(error: &trash::Error) -> bool {
+    // Unknown errors may offer a separate, explicit confirmation, provided
+    // the caller can revalidate the unchanged, accessible original target.
+    if matches!(error, trash::Error::Unknown { .. }) {
+        return true;
+    }
+    #[cfg(windows)]
+    if let trash::Error::Os { code, .. } = error {
+        use windows::Win32::UI::Shell::{COPYENGINE_E_RECYCLE_BIN_NOT_FOUND,
+            COPYENGINE_E_RECYCLE_FORCE_NUKE, COPYENGINE_E_RECYCLE_PATH_TOO_LONG,
+            COPYENGINE_E_RECYCLE_SIZE_TOO_BIG};
+        return [COPYENGINE_E_RECYCLE_BIN_NOT_FOUND.0, COPYENGINE_E_RECYCLE_FORCE_NUKE.0,
+            COPYENGINE_E_RECYCLE_PATH_TOO_LONG.0, COPYENGINE_E_RECYCLE_SIZE_TOO_BIG.0].contains(code);
+    }
+    let _ = error;
+    false
+}
+
+fn folder_delete_identity(path: &str) -> Result<String, String> {
+    let path = Path::new(path);
+    let canonical = fs::canonicalize(path).map_err(|e| e.to_string())?;
+    let metadata = fs::symlink_metadata(path).map_err(|e| e.to_string())?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err("Folder deletion requires a regular directory".into());
+    }
+    let (volume, id) = t_utils::file_identity(path).ok_or("Cannot identify deletion target")?;
+    Ok(format!("{canonical:?}:{volume}:{id}:{:?}", metadata.created().ok()))
+}
+
+fn verify_folder_delete_identity(path: &str, expected_identity: &str) -> Result<(), String> {
+    if folder_delete_identity(path)? != expected_identity {
+        return Err("Deletion target changed; cancel and select the folder again".into());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn prepare_folder_delete(folder_path: &str, library_id: &str) -> Result<String, String> {
+    with_current_library(library_id, || {
+        validate_folder_delete(folder_path, library_id)?;
+        folder_delete_identity(folder_path)
+    })
+}
+
+#[cfg(test)]
+mod folder_trash_failure_tests {
+    use super::{folder_trash_allows_permanent_delete, folder_delete_identity, verify_folder_delete_identity};
+
+    #[test]
+    fn access_connection_and_uncertain_os_errors_never_offer_permanent_deletion() {
+        for error in [
+            trash::Error::CouldNotAccess { target: "unavailable".into() },
+            trash::Error::Os { code: 5, description: "Access denied".into() },
+            trash::Error::Os { code: 32, description: "Sharing violation".into() },
+            trash::Error::Os { code: 53, description: "Network path not found".into() },
+            trash::Error::Os { code: 0x80270035u32 as i32, description: "Recycle unknown error".into() },
+        ] {
+            assert!(!folder_trash_allows_permanent_delete(&error));
+        }
+    }
+
+    #[test]
+    fn unknown_error_can_offer_confirmation_after_target_revalidation() {
+        assert!(folder_trash_allows_permanent_delete(&trash::Error::Unknown {
+            description: "Unspecified failure".into(),
+        }));
+    }
+
+    #[test]
+    fn contents_may_change_but_replaced_target_cannot_be_confirmed() {
+        let root = std::env::temp_dir().join(format!("lap-trash-retry-{}-{}",
+            std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        std::fs::create_dir(&root).unwrap();
+        let path = root.to_str().unwrap();
+        let expected = folder_delete_identity(path).unwrap();
+        std::fs::write(root.join("child"), "content").unwrap();
+        assert_eq!(folder_delete_identity(path).unwrap(), expected);
+        assert!(verify_folder_delete_identity(path, &expected).is_ok());
+        let moved = root.with_extension("moved");
+        std::fs::rename(&root, &moved).unwrap();
+        std::fs::create_dir(&root).unwrap();
+        assert!(verify_folder_delete_identity(path, &expected).is_err());
+        std::fs::remove_file(moved.join("child")).unwrap();
+        std::fs::remove_dir(&root).unwrap();
+        std::fs::remove_dir(&moved).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn only_explicit_recycle_limits_enable_confirmation() {
+        for code in [0x8027003Au32, 0x80270036, 0x80270038, 0x80270037] {
+            assert!(folder_trash_allows_permanent_delete(&trash::Error::Os {
+                code: code as i32, description: "Recycle restriction".into(),
+            }));
+        }
+    }
+}
+
+#[tauri::command]
+pub fn delete_folder(folder_path: &str, library_id: &str, expected_identity: &str) -> Result<FolderTrashResult, String> {
+    with_current_library(library_id, || {
+        validate_folder_delete(folder_path, library_id)?;
+        verify_folder_delete_identity(folder_path, expected_identity)?;
+        #[cfg(windows)]
+        if folder_is_on_network_drive(folder_path)? {
+            return Ok(FolderTrashResult {
+                deleted_count: 0, can_delete_permanently: true, may_have_partially_completed: false,
+                error: Some("This network location does not support the Windows Recycle Bin".into()),
+            });
+        }
+        if let Err(error) = t_utils::move_folder_to_trash(folder_path) {
+            eprintln!("Failed to move folder to trash: {folder_path}: {error}");
+            let can_delete_permanently = folder_trash_allows_permanent_delete(&error)
+                && validate_folder_delete(folder_path, library_id).is_ok()
+                && t_utils::directory_accessible(folder_path)
+                && verify_folder_delete_identity(folder_path, expected_identity).is_ok();
+            return Ok(FolderTrashResult { deleted_count: 0, can_delete_permanently, may_have_partially_completed: true, error: Some(error.to_string()) });
+        }
+        match fs::symlink_metadata(folder_path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            result => {
+                let error = match result {
+                    Ok(_) => "The folder still exists after the trash operation".to_string(),
+                    Err(error) => error.to_string(),
+                };
+                eprintln!("Uncertain folder trash result: {folder_path}: {error}");
+                return Ok(FolderTrashResult { deleted_count: 0, can_delete_permanently: false, may_have_partially_completed: true, error: Some(error) });
+            }
+        }
+        let deleted_count = AFolder::delete_folder(folder_path)
+            .map_err(|e| format!("Error while deleting folder from DB: {}", e))?;
+        Ok(FolderTrashResult { deleted_count, can_delete_permanently: false, may_have_partially_completed: false, error: None })
+    })
 }
 
 /// permanently delete a folder (skip trash)
 #[tauri::command]
-pub fn delete_folder_permanently(folder_path: &str) -> Result<usize, String> {
-    t_utils::delete_folder_permanently(folder_path)?;
+pub fn delete_folder_permanently(folder_path: &str, library_id: &str, expected_identity: &str) -> Result<usize, String> {
+    with_current_library(library_id, || {
+        validate_folder_delete(folder_path, library_id)?;
+        verify_folder_delete_identity(folder_path, expected_identity)?;
+        t_utils::delete_folder_permanently(folder_path)?;
 
-    AFolder::delete_folder(folder_path)
-        .map_err(|e| format!("Error while deleting folder from DB: {}", e))
+        AFolder::delete_folder(folder_path)
+            .map_err(|e| format!("Error while deleting folder from DB: {}", e))
+    })
 }
 
 /// reveal a file or folder in the file explorer (or finder)
@@ -940,7 +1224,7 @@ pub fn open_external_url(url: &str) -> Result<(), String> {
 /// system's default layout. A RAW+JPEG pair supplies its JPEG/HEIC companion.
 #[tauri::command]
 pub async fn set_desktop_wallpaper(
-    app_handle: AppHandle,
+    _app_handle: AppHandle,
     file_path: &str,
     companion_path: Option<String>,
 ) -> Result<(), String> {
@@ -950,11 +1234,12 @@ pub async fn set_desktop_wallpaper(
     if !Path::new(&source_path).is_file() {
         return Err("Wallpaper source file does not exist".to_string());
     }
+    t_utils::require_local_content(Path::new(&source_path)).map_err(|error| error.to_string())?;
 
     #[cfg(target_os = "macos")]
     {
         let (sender, receiver) = tokio::sync::oneshot::channel();
-        app_handle
+        _app_handle
             .run_on_main_thread(move || {
                 use objc2::MainThreadMarker;
                 use objc2::runtime::AnyObject;
@@ -1096,6 +1381,10 @@ pub fn open_files_with_app(file_paths: Vec<String>, app_path: &str) -> Result<()
         return Err("Missing file path or app path".to_string());
     }
 
+    for path in &file_paths {
+        t_utils::require_local_content(Path::new(path)).map_err(|error| error.to_string())?;
+    }
+
     #[cfg(target_os = "macos")]
     {
         Command::new("open")
@@ -1190,8 +1479,10 @@ pub async fn get_query_file_ids(params: QueryParams) -> Result<Vec<i64>, String>
 }
 
 #[tauri::command]
-pub fn get_library_visible_counts() -> Result<t_sqlite::LibraryVisibleCounts, String> {
-    AFile::get_library_visible_counts()
+pub async fn get_library_visible_counts(id: Option<String>) -> Result<t_sqlite::LibraryVisibleCounts, String> {
+    tauri::async_runtime::spawn_blocking(move || AFile::get_library_visible_counts(id.as_deref()))
+        .await
+        .map_err(|e| format!("Failed to join library count task: {}", e))?
         .map_err(|e| format!("Error while getting library visible counts: {}", e))
 }
 
@@ -1441,7 +1732,7 @@ pub async fn sync_album_folder_mtimes(
         crate::t_utils::sync_single_folder(
             &sync_app_handle,
             album_id,
-            folder_id,
+            Some(folder_id),
             &folder_path,
             group_raw_jpeg_pairs,
         )
@@ -1457,22 +1748,39 @@ pub async fn sync_album_folder_mtimes(
     Ok(result)
 }
 
-/// Refresh the subfolder tree below a folder without scanning its files.
+/// Reconcile RAW pairs from files already indexed in the current library.
 #[tauri::command]
-pub async fn refresh_album_subfolders(
+pub async fn reconcile_raw_jpeg_pairs(library_id: String, enabled: bool) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        with_current_library(&library_id, || t_utils::reconcile_raw_pair_grouping(enabled))
+    })
+    .await
+    .map_err(|error| format!("RAW pair update task failed ({error})"))?
+}
+
+/// Refresh the subfolder tree and synchronize the files directly in the folder.
+#[tauri::command]
+pub async fn refresh_album_folders(
     app_handle: tauri::AppHandle,
     album_id: i64,
     folder_path: String,
-) -> Result<(), String> {
-    let migrations = tauri::async_runtime::spawn_blocking(move || {
-        t_utils::refresh_album_subfolders(album_id, &folder_path)
+    library_id: String,
+    group_raw_jpeg_pairs: bool,
+) -> Result<t_utils::FolderMtimeSyncResult, String> {
+    let sync_app_handle = app_handle.clone();
+    let sync = tauri::async_runtime::spawn_blocking(move || {
+        with_current_library(&library_id, || {
+            t_utils::sync_single_folder(
+                &sync_app_handle, album_id, None, &folder_path, group_raw_jpeg_pairs,
+            )
+        })
     })
     .await
-    .map_err(|error| format!("Subfolder refresh task failed: {error}"))??;
-    if !migrations.is_empty() {
-        let _ = app_handle.emit("album-folder-paths-migrated", &migrations);
+    .map_err(|error| format!("Folder refresh task failed: {error}"))??;
+    if !sync.folder_path_migrations.is_empty() {
+        let _ = app_handle.emit("album-folder-paths-migrated", &sync.folder_path_migrations);
     }
-    Ok(())
+    Ok(sync)
 }
 
 #[tauri::command]
@@ -1492,6 +1800,12 @@ pub async fn edit_image(params: t_image::EditParams) -> Result<bool, String> {
     Ok(t_image::edit_image(params).await)
 }
 
+/// render a photo montage and save it
+#[tauri::command]
+pub async fn render_montage(params: t_montage::MontageParams) -> Result<Option<String>, String> {
+    t_montage::render_montage(params).await
+}
+
 /// copy an edited image to clipboard
 #[tauri::command]
 pub async fn copy_edited_image(params: t_image::EditParams) -> Result<bool, String> {
@@ -1503,17 +1817,74 @@ pub async fn copy_edited_image(params: t_image::EditParams) -> Result<bool, Stri
 pub async fn copy_images(
     app_handle: tauri::AppHandle,
     file_paths: Vec<String>,
+    files_only: bool,
 ) -> Result<usize, String> {
-    t_image::copy_files_to_clipboard(&app_handle, file_paths).await
+    t_image::copy_files_to_clipboard(&app_handle, file_paths, files_only).await
+}
+
+/// Copy recorded paths as plain text, including paths to offline originals.
+#[tauri::command]
+pub fn copy_file_paths(file_paths: Vec<String>) -> Result<(), String> {
+    let text = file_paths
+        .into_iter()
+        .filter(|path| !path.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    if text.is_empty() {
+        return Err("No file paths selected".into());
+    }
+    let mut clipboard = FILE_PATH_CLIPBOARD.lock().map_err(|error| error.to_string())?;
+    if clipboard.is_none() {
+        *clipboard = Some(arboard::Clipboard::new().map_err(|error| error.to_string())?);
+    }
+    clipboard
+        .as_mut()
+        .ok_or_else(|| "Clipboard is unavailable".to_string())?
+        .set_text(text)
+        .map_err(|error| error.to_string())
+}
+
+/// Preview names and conflicts without modifying files.
+#[tauri::command]
+pub async fn preview_batch_rename(
+    library_id: String,
+    file_ids: Vec<i64>,
+    options: crate::t_batch_rename::RenameOptions,
+) -> Result<crate::t_batch_rename::RenamePreview, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        with_current_library(&library_id, || crate::t_batch_rename::preview(&file_ids, &options))
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn batch_rename_files(
+    library_id: String,
+    file_ids: Vec<i64>,
+    options: crate::t_batch_rename::RenameOptions,
+    expected: Vec<crate::t_batch_rename::RenameItem>,
+) -> Result<crate::t_batch_rename::RenamePreview, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        with_current_library(&library_id, || crate::t_batch_rename::execute(&file_ids, &options, &expected))
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 /// rename a file
 #[tauri::command]
-pub fn rename_file(file_id: i64, file_path: &str, new_name: &str) -> Option<String> {
-    let sidecar_rename_plan = build_apple_sidecar_rename_plan(file_id, file_path, new_name).ok()?;
+pub fn rename_file(file_id: i64, file_path: &str, new_name: &str) -> Result<Option<String>, String> {
+    let sidecar_rename_plan = build_apple_sidecar_rename_plan(file_id, file_path, new_name)?;
     if !preflight_rename_plan(file_path, new_name, &sidecar_rename_plan) {
-        return None;
+        return Ok(None);
     }
+    let primary_target = Path::new(file_path).with_file_name(new_name);
+    let xmp = crate::metadata::files::Guard::new(
+        std::iter::once((Path::new(file_path), primary_target.as_path()))
+            .chain(sidecar_rename_plan.iter().map(|p| (p.old_path.as_path(), p.new_path.as_path()))),
+        crate::metadata::files::Operation::Move,
+    )?;
     let original_db_names = collect_original_rename_db_names(file_id, &sidecar_rename_plan);
 
     let mut renamed_sidecars: Vec<(PathBuf, PathBuf)> = Vec::new();
@@ -1526,7 +1897,7 @@ pub fn rename_file(file_id: i64, file_path: &str, new_name: &str) -> Option<Stri
                 error
             );
             rollback_renamed_sidecars(renamed_sidecars);
-            return None;
+            return Ok(None);
         }
         renamed_sidecars.push((plan.old_path.clone(), plan.new_path.clone()));
     }
@@ -1555,13 +1926,14 @@ pub fn rename_file(file_id: i64, file_path: &str, new_name: &str) -> Option<Stri
                     renamed_sidecars,
                     &original_db_names,
                 );
-                return None;
+                return Ok(None);
             }
-            Some(new_file_path)
+            xmp.commit();
+            Ok(Some(new_file_path))
         }
         None => {
             rollback_renamed_sidecars(renamed_sidecars);
-            None
+            Ok(None)
         }
     }
 }
@@ -1574,6 +1946,61 @@ pub fn move_file(
     new_folder_id: i64,
     new_folder_path: &str,
     conflict_policy: &str,
+    batch_id: Option<u64>,
+    group_raw_pairs: bool,
+) -> Result<String, String> {
+    crate::metadata::files::with_transfer_cache(batch_id, |xmp_cache| {
+        move_file_with_cache(file_id, file_path, new_folder_id, new_folder_path, conflict_policy, group_raw_pairs, xmp_cache)
+    })
+}
+
+type MovedComponent = (Option<i64>, PathBuf, t_utils::TransferResult);
+
+fn rollback_moved_components(components: Vec<MovedComponent>) {
+    for (_, original_path, transfer) in components {
+        let _ = transfer.rollback_move(&original_path);
+    }
+}
+
+fn move_file_group(
+    file_path: &str,
+    primary_target: &Path,
+    sidecar_plans: &[crate::metadata::apple_sidecar::SidecarTransferPlan],
+    policy: t_utils::FileConflictPolicy,
+) -> Result<(t_utils::TransferResult, Vec<MovedComponent>), String> {
+    let mut component_transfers = Vec::new();
+    for plan in sidecar_plans {
+        let source_path = plan.old_path.to_string_lossy().into_owned();
+        match t_utils::move_file_to_path_with_policy(&source_path, &plan.new_path, policy) {
+            Ok(transfer) => {
+                component_transfers.push((plan.file_id, plan.old_path.clone(), transfer))
+            }
+            Err(error) => {
+                rollback_moved_components(component_transfers);
+                return Err(error);
+            }
+        }
+    }
+
+    let transfer = match t_utils::move_file_to_path_with_policy(file_path, primary_target, policy)
+    {
+        Ok(transfer) => transfer,
+        Err(error) => {
+            rollback_moved_components(component_transfers);
+            return Err(error);
+        }
+    };
+    Ok((transfer, component_transfers))
+}
+
+fn move_file_with_cache(
+    file_id: i64,
+    file_path: &str,
+    new_folder_id: i64,
+    new_folder_path: &str,
+    conflict_policy: &str,
+    group_raw_pairs: bool,
+    xmp_cache: &mut crate::metadata::files::Cache,
 ) -> Result<String, String> {
     let old_file_info = AFile::get_file_info(file_id).ok().flatten();
     let old_album_id = old_file_info.as_ref().and_then(|file| file.album_id);
@@ -1583,7 +2010,12 @@ pub fn move_file(
         .map(|folder| folder.album_id);
     let policy = t_utils::FileConflictPolicy::from_str(conflict_policy);
     let (primary_target, sidecar_plans) =
-        resolve_group_primary_target(Some(file_id), file_path, new_folder_path, policy)?;
+        resolve_group_primary_target(Some(file_id), file_path, new_folder_path, policy, group_raw_pairs, xmp_cache)?;
+    let xmp = crate::metadata::files::Guard::with_cache(
+        std::iter::once((Path::new(file_path), primary_target.as_path()))
+            .chain(sidecar_plans.iter().map(|p| (p.old_path.as_path(), p.new_path.as_path()))),
+        crate::metadata::files::Operation::Move, xmp_cache,
+    )?;
     let mut replaced_file_ids = Vec::new();
     let mut source_file_ids = HashSet::from([file_id]);
     for plan in &sidecar_plans {
@@ -1597,50 +2029,25 @@ pub fn move_file(
             std::iter::once(&primary_target).chain(sidecar_plans.iter().map(|plan| &plan.new_path)),
             &source_file_ids,
             &mut replaced_file_ids,
+            group_raw_pairs,
         );
     }
 
-    let mut component_transfers = Vec::new();
-    for plan in &sidecar_plans {
-        let source_path = plan.old_path.to_string_lossy().into_owned();
-        match t_utils::move_file_to_path_with_policy(&source_path, &plan.new_path, policy) {
-            Ok(transfer) => {
-                component_transfers.push((plan.file_id, plan.old_path.clone(), transfer))
-            }
-            Err(error) => {
-                for (_, original_path, transfer) in component_transfers {
-                    let _ = transfer.rollback_move(&original_path);
-                }
-                return Err(error);
-            }
-        }
-    }
+    let (transfer, component_transfers) =
+        move_file_group(file_path, &primary_target, &sidecar_plans, policy)?;
 
-    let transfer = match t_utils::move_file_to_path_with_policy(file_path, &primary_target, policy)
-    {
-        Ok(transfer) => transfer,
-        Err(error) => {
-            for (_, original_path, transfer) in component_transfers {
-                let _ = transfer.rollback_move(&original_path);
-            }
-            return Err(error);
-        }
-    };
-
-    let component_file_ids = component_transfers
-        .iter()
-        .filter_map(|(component_id, _, _)| *component_id)
+    let moved_files = std::iter::once((file_id, transfer.path.as_str()))
+        .chain(component_transfers.iter().filter_map(|(id, _, transfer)| {
+            Some(((*id)?, transfer.path.as_str()))
+        }))
         .collect::<Vec<_>>();
     if let Err(error) = AFile::update_moved_file_group(
-        file_id,
-        &component_file_ids,
+        &moved_files,
         &replaced_file_ids,
         new_folder_id,
     ) {
         let rollback_error = transfer.rollback_move(Path::new(file_path)).err();
-        for (_, original_path, transfer) in component_transfers {
-            let _ = transfer.rollback_move(&original_path);
-        }
+        rollback_moved_components(component_transfers);
         return Err(match rollback_error {
             Some(rollback_error) => format!(
                 "Error while moving file group in DB: {}; rollback also failed: {}",
@@ -1665,7 +2072,17 @@ pub fn move_file(
         }
         transfer.finalize()?;
     }
+    xmp.commit_with_cache(xmp_cache);
     transfer.finalize()
+}
+
+#[tauri::command]
+pub fn begin_file_transfer_batch() -> Result<u64, String> {
+    crate::metadata::files::begin_transfer_batch()
+}
+#[tauri::command]
+pub fn end_file_transfer_batch(batch_id: u64) {
+    crate::metadata::files::end_transfer_batch(batch_id);
 }
 
 /// move a file outside the library and remove its database record
@@ -1675,36 +2092,32 @@ pub fn move_file_outside_library(
     file_path: &str,
     new_folder_path: &str,
     conflict_policy: &str,
+    batch_id: Option<u64>,
+    group_raw_pairs: bool,
+) -> Result<String, String> {
+    crate::metadata::files::with_transfer_cache(batch_id, |xmp_cache| {
+        move_file_outside_library_with_cache(file_id, file_path, new_folder_path, conflict_policy, group_raw_pairs, xmp_cache)
+    })
+}
+
+fn move_file_outside_library_with_cache(
+    file_id: i64,
+    file_path: &str,
+    new_folder_path: &str,
+    conflict_policy: &str,
+    group_raw_pairs: bool,
+    xmp_cache: &mut crate::metadata::files::Cache,
 ) -> Result<String, String> {
     let policy = t_utils::FileConflictPolicy::from_str(conflict_policy);
     let (primary_target, sidecar_plans) =
-        resolve_group_primary_target(Some(file_id), file_path, new_folder_path, policy)?;
-    let mut component_transfers = Vec::new();
-    for plan in &sidecar_plans {
-        let source_path = plan.old_path.to_string_lossy().into_owned();
-        match t_utils::move_file_to_path_with_policy(&source_path, &plan.new_path, policy) {
-            Ok(transfer) => {
-                component_transfers.push((plan.file_id, plan.old_path.clone(), transfer))
-            }
-            Err(error) => {
-                for (_, original_path, transfer) in component_transfers {
-                    let _ = transfer.rollback_move(&original_path);
-                }
-                return Err(error);
-            }
-        }
-    }
-
-    let transfer = match t_utils::move_file_to_path_with_policy(file_path, &primary_target, policy)
-    {
-        Ok(transfer) => transfer,
-        Err(error) => {
-            for (_, original_path, transfer) in component_transfers {
-                let _ = transfer.rollback_move(&original_path);
-            }
-            return Err(error);
-        }
-    };
+        resolve_group_primary_target(Some(file_id), file_path, new_folder_path, policy, group_raw_pairs, xmp_cache)?;
+    let xmp = crate::metadata::files::Guard::with_cache(
+        std::iter::once((Path::new(file_path), primary_target.as_path()))
+            .chain(sidecar_plans.iter().map(|p| (p.old_path.as_path(), p.new_path.as_path()))),
+        crate::metadata::files::Operation::Move, xmp_cache,
+    )?;
+    let (transfer, component_transfers) =
+        move_file_group(file_path, &primary_target, &sidecar_plans, policy)?;
 
     let mut delete_ids = vec![file_id];
     for (component_id, _, _) in &component_transfers {
@@ -1715,9 +2128,7 @@ pub fn move_file_outside_library(
 
     if let Err(error) = AFile::batch_delete(&delete_ids) {
         let rollback_error = transfer.rollback_move(Path::new(file_path)).err();
-        for (_, original_path, transfer) in component_transfers {
-            let _ = transfer.rollback_move(&original_path);
-        }
+        rollback_moved_components(component_transfers);
         return Err(match rollback_error {
             Some(rollback_error) => format!(
                 "Error while removing file from DB: {}; rollback also failed: {}",
@@ -1730,6 +2141,7 @@ pub fn move_file_outside_library(
     for (_, _, transfer) in component_transfers {
         transfer.finalize()?;
     }
+    xmp.commit_with_cache(xmp_cache);
     transfer.finalize()
 }
 
@@ -1739,10 +2151,29 @@ pub fn copy_file(
     file_path: &str,
     new_folder_path: &str,
     conflict_policy: &str,
+    batch_id: Option<u64>,
+    group_raw_pairs: bool,
+) -> Result<String, String> {
+    crate::metadata::files::with_transfer_cache(batch_id, |xmp_cache| {
+        copy_file_with_cache(file_path, new_folder_path, conflict_policy, group_raw_pairs, xmp_cache)
+    })
+}
+
+fn copy_file_with_cache(
+    file_path: &str,
+    new_folder_path: &str,
+    conflict_policy: &str,
+    group_raw_pairs: bool,
+    xmp_cache: &mut crate::metadata::files::Cache,
 ) -> Result<String, String> {
     let policy = t_utils::FileConflictPolicy::from_str(conflict_policy);
     let (primary_target, sidecar_plans) =
-        resolve_group_primary_target(None, file_path, new_folder_path, policy)?;
+        resolve_group_primary_target(None, file_path, new_folder_path, policy, group_raw_pairs, xmp_cache)?;
+    let xmp = crate::metadata::files::Guard::with_cache(
+        std::iter::once((Path::new(file_path), primary_target.as_path()))
+            .chain(sidecar_plans.iter().map(|p| (p.old_path.as_path(), p.new_path.as_path()))),
+        crate::metadata::files::Operation::Copy, xmp_cache,
+    )?;
     let mut sidecar_transfers = Vec::new();
     for plan in &sidecar_plans {
         let source_path = plan.old_path.to_string_lossy().into_owned();
@@ -1774,31 +2205,141 @@ pub fn copy_file(
     for transfer in sidecar_transfers {
         transfer.finalize()?;
     }
+    xmp.commit_with_cache(xmp_cache);
     Ok(copied_file_path)
 }
 
 /// import a file into a folder preserving the original file name
 #[tauri::command]
-pub fn import_file(
-    file_path: &str,
+pub async fn import_file(
+    file_path: String,
     folder_id: i64,
-    folder_path: &str,
+    folder_path: String,
+    library_id: Option<String>,
 ) -> Result<Option<AFile>, String> {
+    let library_id = library_id.unwrap_or(t_config::current_library_id()?);
+    tauri::async_runtime::spawn_blocking(move || {
+        with_current_library(&library_id, || {
+            import_single_file(&file_path, folder_id, &folder_path).map(Some)
+        })
+    })
+    .await
+    .map_err(|error| format!("Failed to import file: {error}"))?
+}
+
+fn import_single_file(file_path: &str, folder_id: i64, folder_path: &str) -> Result<AFile, String> {
+    t_utils::require_local_content(Path::new(file_path)).map_err(|error| error.to_string())?;
     // Validate the source is a supported type *before* copying.
     t_utils::get_file_type(file_path)
         .ok_or_else(|| format!("Unsupported file type: {}", file_path))?;
 
-    let new_path = t_utils::import_file(file_path, folder_path)
-        .ok_or_else(|| format!("Failed to copy file: {}", file_path))?;
-    let file_type = t_utils::get_file_type(&new_path).ok_or_else(|| {
-        // The renamed file should have a valid extension; if not, remove
-        // the orphan so the album folder stays clean.
-        let _ = std::fs::remove_file(&new_path);
-        format!("Unsupported file type after copy: {}", new_path)
-    })?;
-    let now = chrono::Utc::now().timestamp_millis();
-    let (file, _) = AFile::add_to_db(folder_id, &new_path, file_type, now)?;
-    Ok(Some(file))
+    let source = Path::new(file_path);
+    let base = Path::new(folder_path).join(source.file_name().ok_or("Missing import file name")?);
+    let mut cache = crate::metadata::files::Cache::default();
+    for index in 0..10_000 {
+        let destination = crate::metadata::apple_sidecar::sibling_candidate_path(&base, index);
+        let new_path = destination.to_str().ok_or("Invalid import destination path")?;
+        let mappings = [(source, destination.as_path())];
+        if !cache.conflicts(mappings)?.is_empty() {
+            continue;
+        }
+        match t_utils::copy_import_file_to(source, &destination) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(format!("Failed to copy file: {error}")),
+        }
+        cache.record(&destination, &[]);
+        let xmp = match crate::metadata::files::Guard::with_cache(
+            mappings, crate::metadata::files::Operation::Copy, &mut cache,
+        ) {
+            Ok(guard) => guard,
+            Err(error) => {
+                let _ = fs::remove_file(&destination);
+                return Err(error);
+            }
+        };
+        let file = index_clipboard_file(new_path, folder_id)?;
+        xmp.commit();
+        return Ok(file);
+    }
+    Err(format!("No available destination for {file_path}"))
+}
+
+#[tauri::command]
+pub async fn import_files(
+    library_id: String,
+    file_paths: Vec<String>,
+    folder_id: i64,
+    folder_path: String,
+    group_raw_jpeg_pairs: bool,
+    on_progress: tauri::ipc::Channel<usize>,
+) -> Result<Vec<(String, String)>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        with_current_library(&library_id, || {
+            let paths = file_paths.iter().map(Path::new).collect::<Vec<_>>();
+            // Small selections can afford content-ID verification; large batches
+            // use the same filename pairing as folder imports to stay linear.
+            let trust_unique_name = paths.len() > 32;
+            let groups = group_media_paths(&paths, group_raw_jpeg_pairs, trust_unique_name)
+                .collect::<Vec<_>>();
+            let mut occupied_stems = if groups.len() == paths.len() {
+                HashSet::new()
+            } else {
+                media_destination_stems(Path::new(&folder_path))?
+            };
+            let mut pending = Vec::new();
+            let mut imported_files = Vec::new();
+            let mut errors = Vec::new();
+            let mut processed = 0;
+            for (primary, companion) in groups {
+                if let Some(companion) = companion {
+                    let sources = [primary, companion];
+                    match import_media_pair(primary, companion, folder_id, &folder_path, &mut occupied_stems) {
+                        Ok(pair) => pending.push((sources, pair)),
+                        Err(error) => record_import_errors(&mut errors, sources, &error),
+                    }
+                    processed += 2;
+                } else {
+                    match import_single_file(&primary.to_string_lossy(), folder_id, &folder_path) {
+                        Ok(file) => {
+                            remember_destination_stem(&file, &mut occupied_stems);
+                            imported_files.push(file);
+                        }
+                        Err(error) => record_import_errors(&mut errors, [primary], &error),
+                    }
+                    processed += 1;
+                }
+                let _ = on_progress.send(processed);
+            }
+            if !pending.is_empty() || !imported_files.is_empty() {
+                let pairing = reconcile_imported_media_pairs(
+                    folder_id,
+                    imported_files.iter().chain(pending.iter().flat_map(|(_, pair)| pair.files.iter())),
+                    group_raw_jpeg_pairs,
+                );
+                for (sources, pair) in pending {
+                    match &pairing {
+                        Ok(()) => { pair.commit(); }
+                        Err(error) => {
+                            pair.rollback();
+                            record_import_errors(&mut errors, sources, error);
+                        }
+                    }
+                }
+            }
+            Ok(errors)
+        })
+    })
+    .await
+    .map_err(|error| format!("Failed to import files: {error}"))?
+}
+
+fn record_import_errors<'a>(
+    errors: &mut Vec<(String, String)>,
+    sources: impl IntoIterator<Item = &'a Path>,
+    error: &str,
+) {
+    errors.extend(sources.into_iter().map(|source| (source.to_string_lossy().into_owned(), error.to_owned())));
 }
 
 /// Import media from a folder and organize it below the album root by date.
@@ -1811,6 +2352,7 @@ pub fn import_and_organize(
     destination_path: String,
     layout: String,
     completed_paths: Vec<String>,
+    group_raw_jpeg_pairs: bool,
 ) -> Result<(), String> {
     {
         let mut import = state.0.lock().map_err(|_| "Import cancellation state is unavailable")?;
@@ -1828,6 +2370,7 @@ pub fn import_and_organize(
             &destination_path,
             &layout,
             completed_paths.into_iter().collect(),
+            group_raw_jpeg_pairs,
             |progress| { let _ = app_handle.emit("import-organize-progress", progress); },
             || cancellation.lock().map(|import| import.cancelled).unwrap_or(true),
         );
@@ -2041,29 +2584,544 @@ pub async fn import_file_bytes(
     .map_err(|e| format!("Failed to save file: {}", e))?
 }
 
-fn import_clipboard_file(
-    file_path: &Path,
-    folder_id: i64,
-    folder_path: &str,
-) -> Result<AFile, String> {
-    let source = file_path
-        .to_str()
-        .ok_or_else(|| format!("Invalid clipboard file path: {}", file_path.display()))?;
-    t_utils::get_file_type(source)
-        .ok_or_else(|| format!("Unsupported file type: {}", file_path.display()))?;
-    let new_path = t_utils::import_file(source, folder_path)
-        .ok_or_else(|| format!("Failed to copy file: {}", file_path.display()))?;
-    let file_type = t_utils::get_file_type(&new_path).ok_or_else(|| {
-        let _ = std::fs::remove_file(&new_path);
+fn index_clipboard_file(new_path: &str, folder_id: i64) -> Result<AFile, String> {
+    let file_type = t_utils::get_file_type(new_path).ok_or_else(|| {
+        let _ = std::fs::remove_file(new_path);
         format!("Unsupported file type after copy: {}", new_path)
     })?;
     let now = chrono::Utc::now().timestamp_millis();
-    match AFile::add_to_db(folder_id, &new_path, file_type, now) {
+    match AFile::add_to_db(folder_id, new_path, file_type, now) {
         Ok((file, _)) => Ok(file),
         Err(error) => {
-            let _ = std::fs::remove_file(&new_path);
+            let _ = std::fs::remove_file(new_path);
             Err(error)
         }
+    }
+}
+
+fn detect_media_pairs(
+    paths: &[&Path],
+    group_raw_jpeg_pairs: bool,
+    trust_unique_name: bool,
+) -> HashMap<usize, usize> {
+    use crate::metadata::apple_sidecar::{
+        file_record_for_path, live_photo_video_stem_rank, scan_apple_content_identifiers,
+    };
+    if paths.len() < 2 {
+        return HashMap::new();
+    }
+    let extension = |path: &Path| path.extension().and_then(|ext| ext.to_str())
+        .unwrap_or_default().to_ascii_lowercase();
+    let stem = |path: &Path| path.file_stem().and_then(|value| value.to_str())
+        .unwrap_or_default().to_ascii_lowercase();
+    let is_still = |path: &Path| matches!(extension(path).as_str(), "jpg" | "jpeg" | "heic" | "heif" | "hif");
+    let is_raw = |path: &Path| path.to_str().and_then(t_utils::get_file_type) == Some(3);
+
+    let mut pairs = HashMap::new();
+    let mut used = HashSet::new();
+
+    // Bulk folder imports can contain thousands of files; use filename pairing
+    // there and reserve catalog lookups for small selections/clipboard imports.
+    if !trust_unique_name {
+        let mut path_indices = HashMap::with_capacity(paths.len());
+        for (index, path) in paths.iter().enumerate() {
+            path_indices.insert(path.to_path_buf(), index);
+        }
+        for (index, path) in paths.iter().enumerate() {
+            if used.contains(&index) {
+                continue;
+            }
+            let Some(file) = path.to_str().and_then(|path| file_record_for_path(path).ok().flatten()) else {
+                continue;
+            };
+            let grouped = match file.media_subtype.as_deref() {
+                Some("live_photo") => true,
+                Some("raw_jpeg_pair") => group_raw_jpeg_pairs,
+                _ => false,
+            };
+            if !grouped {
+                continue;
+            }
+            let Some(companion) = file.live_photo_video_path else { continue };
+            let Some(&other) = path_indices.get(Path::new(&companion)) else { continue };
+            if other == index || used.contains(&other) {
+                continue;
+            }
+            pairs.insert(index, other);
+            used.extend([index, other]);
+        }
+    }
+
+    type PairKey = (PathBuf, String);
+    let mut videos = HashMap::<PairKey, Vec<usize>>::new();
+    let mut stills = HashMap::<PairKey, Vec<usize>>::new();
+    let mut raws = HashMap::<PairKey, Vec<usize>>::new();
+    for (index, path) in paths.iter().enumerate() {
+        if used.contains(&index) {
+            continue;
+        }
+        let key = (path.parent().unwrap_or(Path::new("")).to_path_buf(), stem(path));
+        let ext = extension(path);
+        if ext == "mov" {
+            videos.entry(key).or_default().push(index);
+        } else if is_still(path) {
+            stills.entry(key).or_default().push(index);
+        } else if is_raw(path) {
+            raws.entry(key).or_default().push(index);
+        }
+    }
+
+    for (key, still_indices) in &stills {
+        let mut candidates = videos.get(key).cloned().unwrap_or_default();
+        let hevc_key = (key.0.clone(), format!("{}_hevc", key.1));
+        if let Some(extra) = videos.get(&hevc_key) {
+            candidates.extend(extra);
+        }
+        candidates.retain(|index| !used.contains(index));
+        for &still in still_indices {
+            if used.contains(&still) {
+                continue;
+            }
+            let mut available = candidates.iter().copied().filter(|index| !used.contains(index));
+            let Some(first) = available.next() else { continue };
+            let other = if trust_unique_name && available.next().is_none() && still_indices.len() == 1 {
+                // A unique `<stem>.MOV` (or `<stem>_HEVC.MOV`) is enough for the
+                // common case; avoid reading the HEIC payload just to compare IDs.
+                first
+            } else {
+                let identifiers = scan_apple_content_identifiers(&paths[still].to_string_lossy());
+                if identifiers.is_empty() {
+                    continue;
+                }
+                let matching = candidates.iter().copied()
+                    .filter(|index| !used.contains(index))
+                    .filter_map(|index| {
+                        let candidate = paths[index];
+                        let rank = live_photo_video_stem_rank(paths[still], candidate)?;
+                        let identifier = crate::t_video::get_video_metadata(candidate.to_str()?)
+                            .ok()?.content_identifier?;
+                        identifiers.iter().any(|value| value.eq_ignore_ascii_case(&identifier))
+                            .then_some((rank, index))
+                    })
+                    .min();
+                let Some((_, index)) = matching else { continue };
+                index
+            };
+            pairs.insert(still, other);
+            used.extend([still, other]);
+        }
+    }
+
+    if group_raw_jpeg_pairs {
+        for (key, raw_indices) in &raws {
+            if raw_indices.len() != 1 {
+                continue;
+            }
+            let Some(still_indices) = stills.get(key) else { continue };
+            if still_indices.len() != 1 {
+                continue;
+            }
+            let (raw, still) = (raw_indices[0], still_indices[0]);
+            if used.contains(&raw) || used.contains(&still) {
+                continue;
+            }
+            pairs.insert(raw, still);
+            used.extend([raw, still]);
+        }
+    }
+
+    pairs
+}
+
+pub(crate) fn group_media_paths<'a>(
+    paths: &'a [&'a Path],
+    group_raw_jpeg_pairs: bool,
+    trust_unique_name: bool,
+) -> impl Iterator<Item = (&'a Path, Option<&'a Path>)> + 'a {
+    let mut by_folder = HashMap::<_, Vec<_>>::new();
+    for (index, path) in paths.iter().enumerate() {
+        by_folder.entry(path.parent()).or_default().push((index, *path));
+    }
+    let mut pairs = HashMap::new();
+    for folder in by_folder.values().filter(|folder| folder.len() > 1) {
+        let local_paths = folder.iter().map(|(_, path)| *path).collect::<Vec<_>>();
+        pairs.extend(detect_media_pairs(&local_paths, group_raw_jpeg_pairs, trust_unique_name)
+            .into_iter().map(|(primary, companion)| (folder[primary].0, folder[companion].0)));
+    }
+    let companions = pairs.values().copied().collect::<HashSet<_>>();
+    paths.iter().enumerate().filter_map(move |(index, &primary)| {
+        (!companions.contains(&index))
+            .then(|| (primary, pairs.get(&index).map(|&other| paths[other])))
+    })
+}
+
+pub(crate) fn media_destination_stems(folder: &Path) -> Result<HashSet<String>, String> {
+    fs::read_dir(folder).map_err(|error| error.to_string())?
+        .map(|entry| entry.map(|entry| entry.path().file_stem()
+            .map(|stem| stem.to_string_lossy().to_ascii_lowercase())))
+        .collect::<std::io::Result<Vec<_>>>().map(|stems| stems.into_iter().flatten().collect())
+        .map_err(|error| error.to_string())
+}
+
+fn copy_media_pair(
+    primary: &Path,
+    companion: &Path,
+    folder: &Path,
+    occupied_stems: &mut HashSet<String>,
+    xmp_cache: &mut crate::metadata::files::Cache,
+) -> Result<[PathBuf; 2], String> {
+    use crate::metadata::apple_sidecar::sibling_candidate_path;
+    let base = folder.join(primary.file_name().ok_or("Invalid clipboard file name")?);
+    let companion_extension = companion.extension().ok_or("Invalid clipboard companion extension")?;
+    for index in 0..10_000 {
+        let target = sibling_candidate_path(&base, index);
+        let stem = target.file_stem().ok_or("Invalid clipboard target name")?
+            .to_string_lossy().to_ascii_lowercase();
+        if occupied_stems.contains(&stem) { continue; }
+        let companion_target = target.with_extension(companion_extension);
+        if !xmp_cache.conflicts([
+            (primary, target.as_path()),
+            (companion, companion_target.as_path()),
+        ])?.is_empty() {
+            continue;
+        }
+        match t_utils::copy_import_file_to(primary, &target) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.to_string()),
+        }
+        match t_utils::copy_import_file_to(companion, &companion_target) {
+            Ok(()) => {
+                xmp_cache.record(&target, &[]);
+                xmp_cache.record(&companion_target, &[]);
+                occupied_stems.insert(stem);
+                return Ok([target, companion_target]);
+            }
+
+            Err(error) => {
+                fs::remove_file(&target).map_err(|cleanup| format!("{error}. Cleanup failed ({cleanup})"))?;
+                if error.kind() != std::io::ErrorKind::AlreadyExists {
+                    return Err(error.to_string());
+                }
+            }
+        }
+    }
+    Err("Failed to reserve a shared filename for the clipboard pair".into())
+}
+
+pub(crate) struct ImportedMediaPair {
+    pub(crate) paths: [PathBuf; 2],
+    pub(crate) files: Vec<AFile>,
+    xmp: Option<crate::metadata::files::Guard>,
+}
+
+impl ImportedMediaPair {
+    pub(crate) fn commit(self) -> Vec<AFile> {
+        if let Some(xmp) = self.xmp {
+            xmp.commit();
+        }
+        self.files
+    }
+
+    pub(crate) fn rollback(self) {
+        let ids = self.files.iter().filter_map(|file| file.id).collect::<Vec<_>>();
+        if let Err(error) = AFile::batch_delete(&ids) {
+            eprintln!("Failed to roll back imported media records: {error}");
+        }
+        for path in &self.paths {
+            if let Err(error) = fs::remove_file(path)
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                eprintln!("Failed to roll back imported media {}: {error}", path.display());
+            }
+        }
+    }
+}
+
+fn remember_destination_stem(file: &AFile, occupied_stems: &mut HashSet<String>) {
+    if let Some(stem) = Path::new(&file.name).file_stem() {
+        occupied_stems.insert(stem.to_string_lossy().to_ascii_lowercase());
+    }
+}
+
+pub(crate) fn import_media_pair(
+    primary: &Path,
+    companion: &Path,
+    folder_id: i64,
+    folder_path: &str,
+    occupied_stems: &mut HashSet<String>,
+) -> Result<ImportedMediaPair, String> {
+    let mut xmp_cache = crate::metadata::files::Cache::default();
+    let paths = copy_media_pair(primary, companion, Path::new(folder_path), occupied_stems, &mut xmp_cache)?;
+    let xmp = match crate::metadata::files::Guard::with_cache(
+        [primary, companion].into_iter().zip(paths.iter().map(PathBuf::as_path)),
+        crate::metadata::files::Operation::Copy,
+        &mut xmp_cache,
+    ) {
+        Ok(guard) => Some(guard),
+        Err(error) => {
+            for path in &paths {
+                let _ = fs::remove_file(path);
+            }
+            return Err(error);
+        }
+    };
+    let mut pair = ImportedMediaPair { paths, files: Vec::with_capacity(2), xmp };
+    for path in &pair.paths {
+        match index_clipboard_file(&path.to_string_lossy(), folder_id) {
+            Ok(file) => pair.files.push(file),
+            Err(error) => {
+                pair.rollback();
+                return Err(error);
+            }
+        }
+    }
+    Ok(pair)
+}
+
+pub(crate) fn import_clipboard_paths(
+    paths: impl IntoIterator<Item = impl AsRef<Path>>,
+    folder_id: i64,
+    folder_path: &str,
+    group_raw_jpeg_pairs: bool,
+) -> Result<Vec<AFile>, String> {
+    let mut seen = HashSet::new();
+    let paths = paths.into_iter().filter_map(|path| {
+        let path = path.as_ref();
+        path.to_str().and_then(t_utils::get_file_type)?;
+        seen.insert(path.to_path_buf()).then(|| path.to_path_buf())
+    }).collect::<Vec<_>>();
+    let paths = paths.iter().map(PathBuf::as_path).collect::<Vec<_>>();
+    let groups = group_media_paths(&paths, group_raw_jpeg_pairs, false).collect::<Vec<_>>();
+    let mut occupied_stems = if groups.len() == paths.len() {
+        HashSet::new()
+    } else {
+        media_destination_stems(Path::new(folder_path))?
+    };
+    let mut imported = Vec::new();
+    let mut file_error = None;
+    let mut pair_error = None;
+    for (path, companion) in groups {
+        if let Some(companion) = companion {
+            match import_media_pair(path, companion, folder_id, folder_path, &mut occupied_stems) {
+                Ok(pair) => imported.extend(pair.commit()),
+                Err(error) => { pair_error.get_or_insert(error); }
+            }
+        } else if path.is_file() {
+            match import_single_file(&path.to_string_lossy(), folder_id, folder_path) {
+                Ok(file) => {
+                    remember_destination_stem(&file, &mut occupied_stems);
+                    imported.push(file);
+                }
+                Err(error) => { file_error.get_or_insert(error); }
+            }
+        }
+    }
+    if !imported.is_empty() {
+        reconcile_imported_media_pairs(folder_id, &imported, group_raw_jpeg_pairs)?;
+    }
+    if let Some(error) = pair_error {
+        return Err(format!("clipboard_pair_failed: {error}"));
+    }
+    if imported.is_empty() {
+        return file_error.map_or_else(|| Ok(Vec::new()), Err);
+    }
+    Ok(imported)
+}
+
+pub(crate) fn reconcile_imported_media_pairs<'a>(
+    folder_id: i64,
+    files: impl IntoIterator<Item = &'a AFile>,
+    group_raw_jpeg_pairs: bool,
+) -> Result<(), String> {
+    let affected_names = files.into_iter().map(|file| file.name.clone()).collect();
+    AFile::pair_live_photos_in_folder(folder_id, &affected_names, false)?;
+    t_utils::reconcile_raw_pairs_in_folder(folder_id, group_raw_jpeg_pairs)?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod clipboard_pair_tests {
+    use super::*;
+
+    #[derive(Deserialize)]
+    struct MediaPairCase {
+        name: String,
+        files: Vec<String>,
+        group_raw_pairs: bool,
+        groups: Vec<Vec<usize>>,
+    }
+
+    #[test]
+    #[ignore = "run with the external media pair sample suite"]
+    fn external_media_pair_samples() {
+        let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
+        let _runtime = runtime.enter();
+        let cases = std::env::var_os("LAP_MEDIA_PAIR_CASES").expect("missing media pair cases");
+        let samples = std::env::var_os("LAP_MEDIA_PAIR_SAMPLES").expect("missing media pair samples");
+        let cases: Vec<MediaPairCase> = serde_json::from_slice(&fs::read(cases).unwrap()).unwrap();
+        assert!(!cases.is_empty());
+
+        for case in cases {
+            let paths = case.files.iter().map(|file| Path::new(&samples).join(file)).collect::<Vec<_>>();
+            let paths = paths.iter().map(PathBuf::as_path).collect::<Vec<_>>();
+            let expected = case.groups.iter().map(|group| {
+                (paths[group[0]], group.get(1).map(|&index| paths[index]))
+            }).collect::<Vec<_>>();
+            let actual = group_media_paths(&paths, case.group_raw_pairs, false).collect::<Vec<_>>();
+            assert_eq!(actual, expected, "{}", case.name);
+
+            for (primary, companion) in actual {
+                let Some(companion) = companion else { continue; };
+                let target = std::env::temp_dir().join(format!("lap-media-pair-{}", uuid::Uuid::new_v4()));
+                fs::create_dir(&target).unwrap();
+                let conflict = target.join(primary.file_name().unwrap())
+                    .with_extension(companion.extension().unwrap());
+                fs::write(&conflict, b"existing file").unwrap();
+                let mut stems = media_destination_stems(&target).unwrap();
+                let mut xmp_cache = crate::metadata::files::Cache::default();
+                let [copied_primary, copied_companion] =
+                    copy_media_pair(primary, companion, &target, &mut stems, &mut xmp_cache).unwrap();
+                assert_eq!(copied_primary.file_stem(), copied_companion.file_stem(), "{}", case.name);
+                assert_eq!(fs::read(&conflict).unwrap(), b"existing file", "{}", case.name);
+                assert_eq!(fs::read(copied_primary).unwrap(), fs::read(primary).unwrap(), "{}", case.name);
+                assert_eq!(fs::read(copied_companion).unwrap(), fs::read(companion).unwrap(), "{}", case.name);
+                if companion.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("mov")) {
+                    let image = target.join(primary.file_name().unwrap());
+                    let matching = target.join(format!("{}_HEVC.MOV", primary.file_stem().unwrap().to_string_lossy()));
+                    fs::copy(primary, &image).unwrap();
+                    fs::copy(companion, &matching).unwrap();
+                    assert_eq!(
+                        group_media_paths(&[&image, &conflict, &matching], false, false).collect::<Vec<_>>(),
+                        [(image.as_path(), Some(matching.as_path())), (conflict.as_path(), None)],
+                        "{} with a competing MOV", case.name,
+                    );
+                }
+                fs::remove_dir_all(target).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn clipboard_pair_detection_handles_order_ambiguity_and_disabled_grouping() {
+        let root = std::env::temp_dir().join(format!("lap-clipboard-detect-{}", uuid::Uuid::new_v4()));
+        let first = root.join("first");
+        let second = root.join("second");
+        fs::create_dir_all(&first).unwrap();
+        fs::create_dir_all(&second).unwrap();
+        let raw = first.join("A.NEF");
+        let jpeg = first.join("A.JPG");
+        fs::write(&raw, b"raw").unwrap();
+        fs::write(&jpeg, b"jpeg").unwrap();
+
+        let forward = [raw.as_path(), jpeg.as_path()];
+        let backward = [jpeg.as_path(), raw.as_path()];
+        assert_eq!(detect_media_pairs(&forward, true, false), HashMap::from([(0, 1)]));
+        assert_eq!(detect_media_pairs(&backward, true, false), HashMap::from([(1, 0)]));
+        assert!(detect_media_pairs(&forward, false, false).is_empty());
+
+        let ambiguous_raw = first.join("B.NEF");
+        let ambiguous_dng = first.join("B.DNG");
+        let ambiguous_jpeg = first.join("B.JPG");
+        for path in [&ambiguous_raw, &ambiguous_dng, &ambiguous_jpeg] {
+            fs::write(path, b"file").unwrap();
+        }
+        assert!(detect_media_pairs(
+            &[ambiguous_raw.as_path(), ambiguous_dng.as_path(), ambiguous_jpeg.as_path()],
+            true,
+            false,
+        ).is_empty());
+
+        let other_jpeg = second.join("A.JPG");
+        fs::write(&other_jpeg, b"jpeg").unwrap();
+        assert!(detect_media_pairs(&[raw.as_path(), other_jpeg.as_path()], true, false).is_empty());
+
+        let live_image = first.join("C.HEIC");
+        let live_movie = first.join("C.MOV");
+        fs::write(&live_image, b"heic").unwrap();
+        fs::write(&live_movie, b"mov").unwrap();
+        assert!(detect_media_pairs(&[live_image.as_path(), live_movie.as_path()], true, false).is_empty());
+        assert_eq!(
+            detect_media_pairs(&[live_image.as_path(), live_movie.as_path()], true, true),
+            HashMap::from([(0, 1)]),
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn group_media_paths_pairs_same_stem_in_the_same_folder() {
+        let root = std::env::temp_dir().join(format!("lap-group-media-{}", uuid::Uuid::new_v4()));
+        let folder = root.join("photos");
+        let other = root.join("other");
+        fs::create_dir_all(&folder).unwrap();
+        fs::create_dir_all(&other).unwrap();
+        let raw = folder.join("A.NEF");
+        let jpeg = folder.join("A.JPG");
+        let standalone = folder.join("B.JPG");
+        let other_jpeg = other.join("A.JPG");
+        for path in [&raw, &jpeg, &standalone, &other_jpeg] {
+            fs::write(path, b"file").unwrap();
+        }
+
+        let paths = [raw.as_path(), jpeg.as_path(), standalone.as_path(), other_jpeg.as_path()];
+        assert_eq!(
+            group_media_paths(&paths, true, false).collect::<Vec<_>>(),
+            [
+                (raw.as_path(), Some(jpeg.as_path())),
+                (standalone.as_path(), None),
+                (other_jpeg.as_path(), None),
+            ]
+        );
+        assert_eq!(
+            group_media_paths(&paths, false, false).collect::<Vec<_>>(),
+            [
+                (raw.as_path(), None),
+                (jpeg.as_path(), None),
+                (standalone.as_path(), None),
+                (other_jpeg.as_path(), None),
+            ]
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rolling_back_an_imported_pair_removes_both_destination_files() {
+        let root = std::env::temp_dir().join(format!("lap-pair-rollback-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&root).unwrap();
+        let paths = [root.join("A.HEIC"), root.join("A.MOV")];
+        for path in &paths {
+            fs::write(path, b"media").unwrap();
+        }
+        ImportedMediaPair { paths: paths.clone(), files: Vec::new(), xmp: None }.rollback();
+        assert!(paths.iter().all(|path| !path.exists()));
+        fs::remove_dir(root).unwrap();
+    }
+
+    #[test]
+    fn clipboard_pair_keeps_a_shared_stem_and_rolls_back_a_failed_copy() {
+        let root = std::env::temp_dir().join(format!("lap-clipboard-pair-{}", uuid::Uuid::new_v4()));
+        let target = root.join("target");
+        fs::create_dir_all(&target).unwrap();
+        let primary = root.join("A.NEF");
+        let companion = root.join("A.JPG");
+        fs::write(&primary, b"raw").unwrap();
+        fs::write(&companion, b"jpeg").unwrap();
+        fs::write(target.join("A.NEF.xmp"), b"existing XMP").unwrap();
+
+        let mut occupied_stems = media_destination_stems(&target).unwrap();
+        let mut xmp_cache = crate::metadata::files::Cache::default();
+        let [raw, jpeg] = copy_media_pair(&primary, &companion, &target, &mut occupied_stems, &mut xmp_cache).unwrap();
+        assert_eq!(raw, target.join("A(1).NEF"));
+        assert_eq!(jpeg, target.join("A(1).JPG"));
+        assert_eq!(fs::read(target.join("A.NEF.xmp")).unwrap(), b"existing XMP");
+        assert_eq!(fs::read(jpeg).unwrap(), b"jpeg");
+
+        fs::remove_file(&companion).unwrap();
+        assert!(copy_media_pair(&primary, &companion, &target, &mut occupied_stems, &mut xmp_cache).is_err());
+        assert_eq!(fs::read_dir(&target).unwrap().count(), 3);
+        fs::remove_dir_all(root).unwrap();
     }
 }
 
@@ -2111,33 +3169,20 @@ pub async fn import_clipboard(
     _app_handle: tauri::AppHandle,
     folder_id: i64,
     folder_path: &str,
+    group_raw_jpeg_pairs: bool,
 ) -> Result<Vec<AFile>, String> {
     #[cfg(target_os = "linux")]
     {
         let clipboard_data = crate::t_pasteboard::get_clipboard_import_data(&_app_handle).await?;
         if !clipboard_data.file_paths.is_empty() {
-            let mut imported = Vec::new();
-            for path in clipboard_data
-                .file_paths
-                .iter()
-                .map(std::path::Path::new)
-                .filter(|path| path.is_file())
-            {
-                let supported = path.to_str().and_then(t_utils::get_file_type).is_some();
-                if !supported {
-                    continue;
+            match import_clipboard_paths(
+                &clipboard_data.file_paths, folder_id, folder_path, group_raw_jpeg_pairs,
+            ) {
+                Ok(files) if !files.is_empty() || clipboard_data.png.is_none() => return Ok(files),
+                Err(error) if clipboard_data.png.is_none() || error.starts_with("clipboard_pair_failed:") => {
+                    return Err(error);
                 }
-                match import_clipboard_file(path, folder_id, folder_path) {
-                    Ok(file) => imported.push(file),
-                    Err(error) => eprintln!(
-                        "Failed to import clipboard file {}: {}",
-                        path.display(),
-                        error
-                    ),
-                }
-            }
-            if !imported.is_empty() {
-                return Ok(imported);
+                _ => {}
             }
         }
 
@@ -2158,40 +3203,21 @@ pub async fn import_clipboard(
             };
         }
 
-        if !clipboard_data.file_paths.is_empty() {
-            return Err("Clipboard does not contain supported image files".to_string());
-        }
     }
 
     let mut clipboard =
         arboard::Clipboard::new().map_err(|e| format!("Failed to open clipboard: {}", e))?;
     if let Ok(file_paths) = clipboard.get().file_list() {
         if !file_paths.is_empty() {
-            let mut imported = Vec::new();
-            for path in file_paths.iter().filter(|path| path.is_file()) {
-                let supported = path.to_str().and_then(t_utils::get_file_type).is_some();
-                if !supported {
-                    continue;
-                }
-                match import_clipboard_file(path, folder_id, folder_path) {
-                    Ok(file) => imported.push(file),
-                    Err(error) => eprintln!(
-                        "Failed to import clipboard file {}: {}",
-                        path.display(),
-                        error
-                    ),
-                }
-            }
-            if !imported.is_empty() {
-                return Ok(imported);
-            }
-            return Err("Clipboard does not contain supported image files".to_string());
+            return import_clipboard_paths(file_paths, folder_id, folder_path, group_raw_jpeg_pairs);
         }
     }
 
-    let clipboard_image = clipboard
-        .get_image()
-        .map_err(|e| format!("No image found in clipboard: {}", e))?;
+    let clipboard_image = match clipboard.get_image() {
+        Ok(image) => image,
+        Err(arboard::Error::ContentNotAvailable) => return Ok(Vec::new()),
+        Err(error) => return Err(format!("Failed to read clipboard image: {}", error)),
+    };
     let width = u32::try_from(clipboard_image.width)
         .map_err(|_| "Clipboard image width is too large".to_string())?;
     let height = u32::try_from(clipboard_image.height)
@@ -2221,8 +3247,8 @@ pub async fn import_clipboard(
 
 /// delete a file
 #[tauri::command]
-pub fn delete_file(file_id: i64, file_path: &str) -> Result<BatchDeleteResult, String> {
-    delete_file_group(file_id, file_path, false)
+pub fn delete_file(file_id: i64, file_path: &str, group_raw_pairs: bool) -> Result<BatchDeleteResult, String> {
+    delete_file_group(file_id, file_path, false, group_raw_pairs)
 }
 
 /// delete a file permanently
@@ -2230,25 +3256,40 @@ pub fn delete_file(file_id: i64, file_path: &str) -> Result<BatchDeleteResult, S
 pub fn delete_file_permanently(
     file_id: i64,
     file_path: &str,
+    group_raw_pairs: bool,
 ) -> Result<BatchDeleteResult, String> {
-    delete_file_group(file_id, file_path, true)
+    delete_file_group(file_id, file_path, true, group_raw_pairs)
 }
 
 fn delete_file_group(
     file_id: i64,
     file_path: &str,
     permanently: bool,
+    group_raw_pairs: bool,
 ) -> Result<BatchDeleteResult, String> {
-    let component_files = AFile::live_photo_component_files(file_id)?;
+    let delete = if permanently { t_utils::delete_file_permanently } else { t_utils::trash_path };
+    delete_file_group_with(file_id, file_path, permanently, group_raw_pairs, delete)
+}
+
+pub(crate) fn delete_file_group_with(
+    file_id: i64,
+    file_path: &str,
+    permanently: bool,
+    group_raw_pairs: bool,
+    delete: impl Fn(&str) -> Result<(), String>,
+) -> Result<BatchDeleteResult, String> {
+    let component_files = AFile::grouped_component_files(file_id, group_raw_pairs)?;
+    for component in &component_files {
+        if let Some(path) = component.file_path.as_deref()
+            && !t_utils::file_accessible(path)
+        {
+            return Err(format!("original_unavailable: {path}"));
+        }
+    }
     let mut deleted_file_ids = Vec::with_capacity(component_files.len() + 1);
     let mut delete_errors = Vec::new();
 
-    let primary_result = if permanently {
-        t_utils::delete_file_permanently(file_path)
-    } else {
-        t_utils::trash_path(file_path)
-    };
-    if let Err(error) = primary_result {
+    if let Err(error) = delete(file_path) {
         if permanently {
             return Err(error);
         }
@@ -2262,19 +3303,14 @@ fn delete_file_group(
 
     for component in &component_files {
         if let Some(path) = component.file_path.as_deref() {
-            let result = if permanently {
-                t_utils::delete_file_permanently(path)
-            } else {
-                t_utils::trash_path(path)
-            };
-            match result {
+            match delete(path) {
                 Ok(_) => {
                     if let Some(id) = component.id {
                         deleted_file_ids.push(id);
                     }
                 }
                 Err(error) => delete_errors.push(format!(
-                    "Failed to delete Live Photo sidecar '{}': {}",
+                    "Failed to delete paired media '{}': {}",
                     path, error
                 )),
             }
@@ -2284,6 +3320,13 @@ fn delete_file_group(
     if let Err(error) = delete_apple_aae_sidecars(file_path, permanently) {
         delete_errors.push(format!("Failed to delete Apple sidecar: {}", error));
     }
+
+    if let Err(error) = crate::metadata::files::delete_orphans(
+        std::iter::once(Path::new(file_path))
+            .chain(component_files.iter()
+                .filter(|file| file.id.is_some_and(|id| deleted_file_ids.contains(&id)))
+                .filter_map(|file| file.file_path.as_deref().map(Path::new))), permanently,
+    ) { delete_errors.push(error); }
 
     AFile::batch_delete(&deleted_file_ids)
         .map_err(|e| format!("Error while deleting removed files from DB: {}", e))?;
@@ -2321,14 +3364,348 @@ pub struct BatchDeleteResult {
     pub trash_failed_file_ids: Vec<i64>,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RawPairDeleteScope {
+    Both,
+    Raw,
+    Companion,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileDeleteSelection {
+    library_id: String,
+    scope: RawPairDeleteScope,
+    companions: Vec<Option<BatchDeleteFile>>,
+}
+
 #[tauri::command]
 pub async fn batch_delete_files(
     files: Vec<BatchDeleteFile>,
     permanently: bool,
+    group_raw_pairs: bool,
+    selection: Option<FileDeleteSelection>,
 ) -> Result<BatchDeleteResult, String> {
-    tauri::async_runtime::spawn_blocking(move || delete_files_grouped(files, permanently))
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Some(selection) = selection {
+            return with_current_library(&selection.library_id, || {
+                delete_selected_files(files, permanently, &selection, group_raw_pairs)
+            });
+        }
+        delete_files_grouped(files, permanently, group_raw_pairs)
+    })
         .await
         .map_err(|e| format!("Failed to run batch delete: {}", e))?
+}
+
+fn delete_selected_files(
+    files: Vec<BatchDeleteFile>,
+    permanently: bool,
+    selection: &FileDeleteSelection,
+    group_raw_pairs: bool,
+) -> Result<BatchDeleteResult, String> {
+    if files.len() != selection.companions.len() {
+        return Err("RAW pair selection changed".into());
+    }
+    let ids = files.iter().map(|file| file.file_id)
+        .chain(selection.companions.iter().flatten().map(|file| file.file_id))
+        .collect::<Vec<_>>();
+    if ids.iter().copied().collect::<HashSet<_>>().len() != ids.len() {
+        return Err("RAW pair selection changed".into());
+    }
+    let catalog = AFile::get_files_by_ids(&ids)?.into_iter()
+        .filter_map(|file| Some((file.id?, file)))
+        .collect::<HashMap<_, _>>();
+    delete_selected_file_targets(files, permanently, selection, &catalog, group_raw_pairs)
+}
+
+fn has_other_media_owner(sidecar: &Path) -> bool {
+    let Some(parent) = sidecar.parent() else { return false };
+    let Some(stem) = sidecar.file_stem().and_then(|value| value.to_str()) else { return false };
+    let Ok(entries) = fs::read_dir(parent) else { return false };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            continue;
+        }
+        if path.extension().is_some_and(|extension| {
+            extension.eq_ignore_ascii_case("aae") || extension.eq_ignore_ascii_case("xmp")
+        }) {
+            continue;
+        }
+        let name_matches = path.file_name().and_then(|value| value.to_str())
+            .is_some_and(|value| value.eq_ignore_ascii_case(stem));
+        let stem_matches = path.file_stem().and_then(|value| value.to_str())
+            .is_some_and(|value| value.eq_ignore_ascii_case(stem));
+        if name_matches || stem_matches {
+            return true;
+        }
+    }
+    parent.to_str().is_some_and(|folder| {
+        AFile::has_other_media_owner(folder, stem).unwrap_or(true)
+    })
+}
+
+fn delete_unowned_aae<'a>(
+    removed: impl IntoIterator<Item = &'a str>,
+    protected: &[PathBuf],
+    permanently: bool,
+) -> usize {
+    let protected: HashSet<_> = protected.iter().filter_map(|path| path.to_str())
+        .flat_map(apple_aae_sidecar_paths).collect();
+    let delete = if permanently { t_utils::delete_file_permanently } else { t_utils::trash_path };
+    let mut seen = HashSet::new();
+    let mut failed = 0;
+    for sidecar in removed.into_iter().flat_map(apple_aae_sidecar_paths) {
+        let Some(path) = sidecar.to_str() else { continue };
+        if protected.contains(&sidecar) || !seen.insert(path.to_ascii_lowercase())
+            || has_other_media_owner(&sidecar)
+        {
+            continue;
+        }
+        if let Err(error) = delete(path) {
+            failed += 1;
+            eprintln!("Failed to delete Apple sidecar: {error}");
+        }
+    }
+    failed
+}
+
+fn delete_selected_file_targets(
+    files: Vec<BatchDeleteFile>,
+    permanently: bool,
+    selection: &FileDeleteSelection,
+    catalog: &HashMap<i64, AFile>,
+    group_raw_pairs: bool,
+) -> Result<BatchDeleteResult, String> {
+    let mut targets = Vec::new();
+    let mut owners = Vec::new();
+    let mut raw_pairs = Vec::new();
+    let mut protected_media = Vec::new();
+    for (file, paired_file) in files.into_iter().zip(&selection.companions) {
+        let Some(primary) = catalog.get(&file.file_id) else {
+            return Err("File deletion selection changed".into());
+        };
+        if primary.file_path.as_deref() != Some(file.file_path.as_str()) {
+            return Err("File deletion selection changed".into());
+        }
+        let primary_id = file.file_id;
+        let primary_path = file.file_path.clone();
+        owners.push((primary_id, primary_path.clone()));
+        let Some(companion) = paired_file else {
+            targets.push(file);
+            continue;
+        };
+        let raw_pair = primary.media_subtype.as_deref() == Some("raw_jpeg_pair");
+        let Some(related) = catalog.get(&companion.file_id) else {
+            return Err("File deletion selection changed".into());
+        };
+        if primary.live_photo_video_id != Some(companion.file_id)
+            || !(if raw_pair { group_raw_pairs } else { primary.media_subtype.as_deref() == Some("live_photo") })
+            || related.file_path.as_deref() != Some(companion.file_path.as_str())
+            || (raw_pair && related.media_subtype.as_deref() == Some("live_photo"))
+        {
+            return Err("File deletion selection changed".into());
+        }
+        owners.push((companion.file_id, companion.file_path.clone()));
+        if !raw_pair || !matches!(selection.scope, RawPairDeleteScope::Companion) {
+            targets.push(file);
+        }
+        if !raw_pair || !matches!(selection.scope, RawPairDeleteScope::Raw) {
+            targets.push(BatchDeleteFile { file_id: companion.file_id, file_path: companion.file_path.clone() });
+        }
+        if raw_pair {
+            raw_pairs.push((primary_id, companion.file_id));
+            match selection.scope {
+                RawPairDeleteScope::Raw => protected_media.push(PathBuf::from(&companion.file_path)),
+                RawPairDeleteScope::Companion => protected_media.push(PathBuf::from(primary_path)),
+                RawPairDeleteScope::Both => {}
+            }
+        }
+    }
+
+    let target_ids: HashSet<i64> = targets.iter().map(|target| target.file_id).collect();
+    for (primary_id, primary_path, companion_id) in AFile::primary_files_for_companions(
+        &target_ids.iter().copied().collect::<Vec<_>>(),
+    )? {
+        if !target_ids.contains(&primary_id) {
+            protected_media.push(PathBuf::from(primary_path));
+            raw_pairs.push((primary_id, companion_id));
+        }
+    }
+    let mut result = delete_resolved_files(
+        targets, permanently, false, Some(HashMap::new()), false,
+    )?;
+    let deleted = result.deleted_file_ids.iter().copied().collect::<HashSet<_>>();
+    let mut retained = protected_media;
+    let mut removed = Vec::new();
+    for (id, path) in &owners {
+        if deleted.contains(id) {
+            removed.push(path.as_str());
+        } else {
+            retained.push(PathBuf::from(path));
+        }
+    }
+    if let Err(error) = crate::metadata::files::delete_orphans_protected(
+        removed.iter().copied().map(Path::new), &retained, permanently,
+    ) {
+        result.failed_count += 1;
+        eprintln!("Failed to delete XMP sidecars: {error}");
+    }
+    for (raw_id, companion_id) in raw_pairs {
+        if deleted.contains(&companion_id) && !deleted.contains(&raw_id) {
+            if let Err(error) = AThumb::delete(raw_id) {
+                eprintln!("Failed to invalidate RAW thumbnail: {error}");
+            }
+        }
+    }
+    result.failed_count += delete_unowned_aae(removed, &retained, permanently);
+    Ok(result)
+}
+
+#[cfg(test)]
+mod raw_pair_delete_tests {
+    use super::*;
+
+    #[test]
+    fn raw_pair_scope_only_removes_selected_files_and_orphaned_sidecars() {
+        for (scope, expected) in [
+            (RawPairDeleteScope::Raw, &[1, 3][..]),
+            (RawPairDeleteScope::Companion, &[2, 3][..]),
+            (RawPairDeleteScope::Both, &[1, 2, 3][..]),
+        ] {
+            assert_pair_deletion(scope, expected);
+        }
+    }
+
+    fn assert_pair_deletion(scope: RawPairDeleteScope, expected: &[i64]) {
+        struct TestLibrary(std::path::PathBuf);
+        impl Drop for TestLibrary {
+            fn drop(&mut self) {
+                crate::t_sqlite::TEST_DB_PATH.with(|path| path.replace(None));
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+
+        let unique = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let library = TestLibrary(std::env::temp_dir().join(format!("lap-raw-pair-delete-{unique}")));
+        std::fs::create_dir(&library.0).unwrap();
+        let write = |name: &str| {
+            let path = library.0.join(name);
+            std::fs::write(&path, b"fixture").unwrap();
+            path.to_str().unwrap().to_owned()
+        };
+        crate::t_sqlite::TEST_DB_PATH.with(|path| path.replace(Some(library.0.join("catalog.db").to_str().unwrap().into())));
+        let conn = crate::t_sqlite::open_conn().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE afolders(id INTEGER PRIMARY KEY, path TEXT);
+             INSERT INTO afolders VALUES(1,'/fixtures');
+             CREATE TABLE afiles(id INTEGER PRIMARY KEY, name TEXT, folder_id INTEGER, media_subtype TEXT, live_photo_video_id INTEGER);
+             CREATE TABLE athumbs(file_id INTEGER PRIMARY KEY);
+             INSERT INTO afiles VALUES(1,'image.nef',1,'raw_jpeg_pair',2),(2,'image.jpg',1,NULL,NULL),(3,'single.jpg',1,NULL,NULL);",
+        ).unwrap();
+        let raw = write("image.nef");
+        let companion = write("image.jpg");
+        let single = write("single.jpg");
+        let single_xmp = write("single.xmp");
+        let single_aae = write("single.aae");
+        let xmp = write("image.xmp");
+        let aae = write("image.aae");
+        let catalog = HashMap::from([
+            (1, AFile {
+                media_subtype: Some("raw_jpeg_pair".into()),
+                live_photo_video_id: Some(2),
+                file_path: Some(raw.clone()),
+                ..Default::default()
+            }),
+            (2, AFile { file_path: Some(companion.clone()), ..Default::default() }),
+            (3, AFile { file_path: Some(single.clone()), ..Default::default() }),
+        ]);
+        let result = delete_selected_file_targets(
+            vec![
+                BatchDeleteFile { file_id: 1, file_path: raw.clone() },
+                BatchDeleteFile { file_id: 3, file_path: single.clone() },
+            ],
+            true,
+            &FileDeleteSelection {
+                library_id: String::new(),
+                scope,
+                companions: vec![Some(BatchDeleteFile { file_id: 2, file_path: companion.clone() }), None],
+            },
+            &catalog,
+            true,
+        ).unwrap();
+        assert_eq!(result.failed_count, 0);
+        assert_eq!(result.deleted_file_ids, expected);
+        assert_eq!(Path::new(&raw).is_file(), !expected.contains(&1));
+        assert_eq!(Path::new(&companion).is_file(), !expected.contains(&2));
+        assert!(!Path::new(&single).exists());
+        assert!(!Path::new(&single_xmp).exists());
+        assert!(!Path::new(&single_aae).exists());
+        for path in [xmp, aae] {
+            assert_eq!(Path::new(&path).is_file(), expected.len() == 2, "{path}");
+        }
+        let remaining: Vec<(i64, Option<String>, Option<i64>)> = conn.prepare(
+            "SELECT id, media_subtype, live_photo_video_id FROM afiles ORDER BY id",
+        ).unwrap().query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).unwrap()
+            .collect::<Result<_, _>>().unwrap();
+        assert_eq!(remaining, (1..=2).filter(|id| !expected.contains(id))
+            .map(|id| (id, None, None)).collect::<Vec<_>>());
+    }
+
+
+    #[test]
+    fn shared_aae_is_kept_for_an_unselected_cloud_only_owner() {
+        struct TestLibrary(std::path::PathBuf);
+        impl Drop for TestLibrary {
+            fn drop(&mut self) {
+                crate::t_sqlite::TEST_DB_PATH.with(|path| path.replace(None));
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+
+        let unique = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let library = TestLibrary(std::env::temp_dir().join(format!("lap-aae-owner-{unique}")));
+        std::fs::create_dir(&library.0).unwrap();
+        let write = |name: &str| {
+            let path = library.0.join(name);
+            std::fs::write(&path, b"fixture").unwrap();
+            path.to_str().unwrap().to_owned()
+        };
+        crate::t_sqlite::TEST_DB_PATH.with(|path| path.replace(Some(library.0.join("catalog.db").to_str().unwrap().into())));
+        let conn = crate::t_sqlite::open_conn().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE afolders(id INTEGER PRIMARY KEY, path TEXT);
+             INSERT INTO afolders VALUES(1,'/fixtures');
+             CREATE TABLE afiles(id INTEGER PRIMARY KEY, name TEXT, folder_id INTEGER, media_subtype TEXT, live_photo_video_id INTEGER);
+             CREATE TABLE athumbs(file_id INTEGER PRIMARY KEY);
+             INSERT INTO afiles VALUES(1,'image.nef',1,'raw_jpeg_pair',2),(2,'image.jpg',1,NULL,NULL),(4,'image.heic',1,NULL,NULL);",
+        ).unwrap();
+        conn.execute("UPDATE afolders SET path=?1", [library.0.to_str().unwrap()]).unwrap();
+        let raw = write("image.nef");
+        let companion = write("image.jpg");
+        // The HEIC row is intentionally cloud-only: no file exists on disk.
+        let _other = library.0.join("image.heic");
+        let aae = write("image.aae");
+        let catalog = HashMap::from([
+            (1, AFile { media_subtype: Some("raw_jpeg_pair".into()), live_photo_video_id: Some(2), file_path: Some(raw.clone()), ..Default::default() }),
+            (2, AFile { file_path: Some(companion.clone()), ..Default::default() }),
+        ]);
+        let result = delete_selected_file_targets(
+            vec![BatchDeleteFile { file_id: 1, file_path: raw }],
+            true,
+            &FileDeleteSelection {
+                library_id: String::new(),
+                scope: RawPairDeleteScope::Both,
+                companions: vec![Some(BatchDeleteFile { file_id: 2, file_path: companion })],
+            },
+            &catalog,
+            true,
+        ).unwrap();
+        assert_eq!(result.deleted_file_ids, vec![1, 2]);
+        assert!(Path::new(&aae).is_file());
+    }
 }
 
 /// Delete files together with their Live Photo and Apple sidecar components.
@@ -2336,43 +3713,64 @@ pub async fn batch_delete_files(
 pub(crate) fn delete_files_grouped(
     files: Vec<BatchDeleteFile>,
     permanently: bool,
+    group_raw_pairs: bool,
+) -> Result<BatchDeleteResult, String> {
+    delete_files_with_components(files, permanently, group_raw_pairs, None)
+}
+
+pub(crate) fn delete_files_with_components(
+    files: Vec<BatchDeleteFile>,
+    permanently: bool,
+    group_raw_pairs: bool,
+    resolved_components: Option<HashMap<i64, Vec<(i64, String)>>>,
+) -> Result<BatchDeleteResult, String> {
+    delete_resolved_files(files, permanently, group_raw_pairs, resolved_components, true)
+}
+
+fn delete_resolved_files(
+    files: Vec<BatchDeleteFile>,
+    permanently: bool,
+    group_raw_pairs: bool,
+    mut resolved_components: Option<HashMap<i64, Vec<(i64, String)>>>,
+    cleanup_sidecars: bool,
 ) -> Result<BatchDeleteResult, String> {
     struct DeleteGroup {
         primary_id: i64,
         primary_path: String,
         components: Vec<(i64, String)>,
-        aae_sidecars: Vec<String>,
     }
 
+    // Resolve and preflight the same targets before changing disk or catalog entries.
     let mut delete_groups = Vec::with_capacity(files.len());
     let mut seen_ids = HashSet::new();
-    let mut seen_aae_paths = HashSet::new();
     for file in &files {
         if !seen_ids.insert(file.file_id) {
             continue;
         }
-        let mut component_targets = Vec::new();
-        if let Ok(components) = AFile::live_photo_component_files(file.file_id) {
-            for component in components {
-                if let (Some(id), Some(path)) = (component.id, component.file_path) {
-                    if seen_ids.insert(id) {
-                        component_targets.push((id, path));
-                    }
-                }
-            }
+        if !t_utils::file_accessible(&file.file_path) {
+            return Err(format!("original_unavailable: {}", file.file_path));
         }
-        let mut aae_sidecars = Vec::new();
-        for sidecar in apple_aae_sidecar_paths(&file.file_path) {
-            let sidecar_path = sidecar.to_string_lossy().into_owned();
-            if seen_aae_paths.insert(sidecar_path.to_ascii_lowercase()) {
-                aae_sidecars.push(sidecar_path);
+        let components = if let Some(resolved) = &mut resolved_components {
+            resolved.remove(&file.file_id).unwrap_or_default()
+        } else {
+            AFile::grouped_component_files(file.file_id, group_raw_pairs)?
+                .into_iter()
+                .filter_map(|component| Some((component.id?, component.file_path?)))
+                .collect()
+        };
+        let mut component_targets = Vec::new();
+        for (id, path) in components {
+            if !t_utils::file_accessible(&path) {
+                return Err(format!("original_unavailable: {}", path));
+            }
+            if seen_ids.insert(id) {
+                component_targets.push((id, path));
             }
         }
         delete_groups.push(DeleteGroup {
             primary_id: file.file_id,
             primary_path: file.file_path.clone(),
             components: component_targets,
-            aae_sidecars,
         });
     }
 
@@ -2405,19 +3803,7 @@ pub(crate) fn delete_files_grouped(
                 deleted_file_ids.push(*file_id);
             } else {
                 group_failed = true;
-                eprintln!("Failed to delete Live Photo sidecar: {}", file_path);
-            }
-        }
-
-        for sidecar_path in &group.aae_sidecars {
-            let result = if permanently {
-                t_utils::delete_file_permanently(sidecar_path)
-            } else {
-                t_utils::trash_path(sidecar_path)
-            };
-            if result.is_err() {
-                group_failed = true;
-                eprintln!("Failed to delete Apple sidecar: {}", sidecar_path);
+                eprintln!("Failed to delete paired file: {}", file_path);
             }
         }
 
@@ -2426,8 +3812,24 @@ pub(crate) fn delete_files_grouped(
         }
     }
 
+    if cleanup_sidecars {
+        if let Err(error) = crate::metadata::files::delete_orphans(
+            delete_groups.iter().flat_map(|group| std::iter::once(Path::new(&group.primary_path))
+                .chain(group.components.iter().map(|(_, path)| Path::new(path)))),
+            permanently,
+        ) { failed_count += 1; eprintln!("Failed to delete XMP sidecars: {error}"); }
+    }
+
     AFile::batch_delete(&deleted_file_ids)
         .map_err(|e| format!("Error while deleting files from DB: {}", e))?;
+    if cleanup_sidecars {
+        let deleted_ids: HashSet<_> = deleted_file_ids.iter().copied().collect();
+        let removed = delete_groups.iter()
+            .flat_map(|group| std::iter::once((group.primary_id, &group.primary_path))
+                .chain(group.components.iter().map(|(id, path)| (*id, path))))
+            .filter_map(|(id, path)| deleted_ids.contains(&id).then_some(path.as_str()));
+        failed_count += delete_unowned_aae(removed, &[], permanently);
+    }
     Ok(BatchDeleteResult {
         failed_count,
         deleted_file_ids,
@@ -2435,11 +3837,42 @@ pub(crate) fn delete_files_grouped(
     })
 }
 
-/// edit a file's comment
 #[tauri::command]
-pub fn edit_file_comment(file_id: i64, comment: &str) -> Result<usize, String> {
-    AFile::update_column(file_id, "comments", &comment)
-        .map_err(|e| format!("Error while editing file comment: {}", e))
+pub fn edit_file_metadata(
+    library_id: String,
+    file_ids: Vec<i64>,
+    changes: std::collections::HashMap<String, String>,
+) -> Result<(), String> {
+    for field in changes.keys() {
+        if !matches!(field.as_str(), "e_title" | "e_headline" | "comments" | "e_artist" | "e_copyright") {
+            return Err(format!("Invalid metadata field: {field}"));
+        }
+    }
+    with_current_library(&library_id, || {
+        let mut conn = crate::t_sqlite::open_conn()?;
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        for (field, value) in &changes {
+            let mut stmt = tx.prepare(&format!("UPDATE afiles SET {field} = ?1 WHERE id = ?2"))
+                .map_err(|e| e.to_string())?;
+            for id in &file_ids {
+                if stmt.execute(rusqlite::params![value, id]).map_err(|e| e.to_string())? != 1 {
+                    return Err(format!("File {id} no longer exists"));
+                }
+            }
+        }
+        let mask = crate::metadata::schema::EDITABLE_XMP_TEXT.iter()
+            .filter(|(column, _, _)| changes.contains_key(*column))
+            .fold(0, |mask, (_, _, bit)| mask | bit);
+        if mask != 0 {
+            let mut stmt = tx.prepare("INSERT INTO axmp_imports(file_id, dirty) VALUES(?1, ?2)
+                ON CONFLICT(file_id) DO UPDATE SET dirty=dirty | excluded.dirty")
+                .map_err(|e| e.to_string())?;
+            for id in &file_ids {
+                stmt.execute(rusqlite::params![id, mask]).map_err(|e| e.to_string())?;
+            }
+        }
+        tx.commit().map_err(|e| e.to_string())
+    })
 }
 
 /// Remove unreferenced thumbnail cache files. When `library_id` is provided,
@@ -2465,27 +3898,28 @@ pub async fn get_file_thumb(
     file_type: i64,
     orientation: i32,
     thumbnail_size: u32,
-    raw_thumbnail_source: String,
+    raw_display_options: RawDisplayOptions,
     force_regenerate: bool,
     thumbnail_seek_percent: Option<u8>,
+    album_id: Option<i64>,
 ) -> Result<Option<AThumb>, String> {
+    let album_id = match album_id.filter(|id| *id > 0) {
+        Some(id) => id,
+        None => AFile::get_file_info(file_id)
+            .map_err(|e| format!("Error while getting file info for thumbnail: {}", e))?
+            .and_then(|file| file.album_id)
+            .unwrap_or(0),
+    };
     if let Some(thumb) = AThumb::get_thumb_if_available(
         file_id,
         file_path,
-        thumbnail_size,
-        orientation,
-        raw_thumbnail_source == "embedded",
         force_regenerate,
+        t_utils::album_accessible(album_id),
     )
     .map_err(|e| format!("Error while getting thumbnail: {}", e))?
     {
         return Ok(Some(thumb));
     }
-
-    let album_id = AFile::get_file_info(file_id)
-        .map_err(|e| format!("Error while getting file info for thumbnail: {}", e))?
-        .and_then(|file| file.album_id)
-        .unwrap_or(0);
 
     AThumb::schedule_background_generation_for_library(
         app_handle,
@@ -2494,7 +3928,7 @@ pub async fn get_file_thumb(
         file_type,
         orientation,
         thumbnail_size,
-        raw_thumbnail_source == "embedded",
+        raw_display_options,
         album_id,
         force_regenerate,
         thumbnail_seek_percent,
@@ -2509,7 +3943,7 @@ pub async fn get_file_thumb_by_id(
     app_handle: tauri::AppHandle,
     file_id: i64,
     thumbnail_size: u32,
-    raw_thumbnail_source: String,
+    raw_display_options: RawDisplayOptions,
     force_regenerate: bool,
 ) -> Result<Option<AThumb>, String> {
     let Some(file) = AFile::get_file_info(file_id)
@@ -2528,10 +3962,8 @@ pub async fn get_file_thumb_by_id(
     if let Some(thumb) = AThumb::get_thumb_if_available(
         file_id,
         &file_path,
-        thumbnail_size,
-        orientation,
-        raw_thumbnail_source == "embedded",
         force_regenerate,
+        file.album_accessible,
     )
     .map_err(|e| format!("Error while getting thumbnail: {}", e))?
     {
@@ -2545,7 +3977,7 @@ pub async fn get_file_thumb_by_id(
         file_type,
         orientation,
         thumbnail_size,
-        raw_thumbnail_source == "embedded",
+        raw_display_options,
         file.album_id.unwrap_or(0),
         force_regenerate,
         None,
@@ -2560,102 +3992,130 @@ pub async fn get_file_thumbs(
     app_handle: tauri::AppHandle,
     files: Vec<ThumbRequest>,
     thumbnail_size: u32,
-    raw_thumbnail_source: String,
+    raw_display_options: RawDisplayOptions,
     force_regenerate: bool,
-    trust_cached: bool,
 ) -> Result<Vec<Option<AThumb>>, String> {
-    let mut thumbs = Vec::with_capacity(files.len());
-    let file_ids: Vec<i64> = files
-        .iter()
-        .map(|request| request.file_id)
-        .filter(|file_id| *file_id > 0)
-        .collect();
-    let mut fetched_thumbs = if force_regenerate {
-        HashMap::new()
-    } else {
-        AThumb::fetch_many(&file_ids)
-            .map_err(|e| format!("Error while fetching thumbnails: {}", e))?
-    };
-
-    for request in files {
-        if request.file_id <= 0 {
-            thumbs.push(None);
-            continue;
-        }
-
-        let mut file_path = request.file_path;
-        let mut file_type = request.file_type.unwrap_or(0);
-        let mut orientation = request.orientation.unwrap_or(1);
-        let mut album_id = request.album_id.unwrap_or(0);
-
-        if file_path.is_none()
-            || request.file_type.is_none()
-            || request.orientation.is_none()
-            || album_id <= 0
-        {
-            if let Some(file) = AFile::get_file_info(request.file_id)
-                .map_err(|e| format!("Error while getting file info for thumbnail: {}", e))?
-            {
-                if file_path.is_none() {
-                    file_path = file.file_path;
+    let library = t_config::current_library_id()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        with_current_library(&library, || {
+            let ids: Vec<_> = files
+                .iter()
+                .map(|f| f.file_id)
+                .filter(|id| *id > 0)
+                .collect();
+            let mut catalog: HashMap<_, _> = AFile::get_files_by_ids(&ids)?
+                .into_iter()
+                .filter_map(|f| f.id.map(|id| (id, f)))
+                .collect();
+            let mut cached = AThumb::fetch_many(&ids)?;
+            let mut thumbs = Vec::with_capacity(files.len());
+            for request in files {
+                let Some(file) = catalog.remove(&request.file_id) else {
+                    thumbs.push(None);
+                    continue;
+                };
+                let Some(path) = file.file_path.as_deref() else {
+                    thumbs.push(None);
+                    continue;
+                };
+                let album_id = file.album_id.unwrap_or(0);
+                if !file.album_accessible {
+                    thumbs.push(cached.remove(&request.file_id));
+                    continue;
                 }
-                if request.file_type.is_none() {
-                    file_type = file.file_type.unwrap_or(0);
+                if !force_regenerate
+                    && !AThumb::auto_repair_allowed(&file, thumbnail_size, raw_display_options)
+                {
+                    thumbs.push(cached.remove(&request.file_id));
+                    continue;
                 }
-                if request.orientation.is_none() {
-                    orientation = file.e_orientation.unwrap_or(1) as i32;
+                if let Some(thumb) = cached.remove(&request.file_id) {
+                    if let Some(thumb) = AThumb::resolve_fetched_thumb_if_available(
+                        thumb,
+                        path,
+                        force_regenerate,
+                        file.album_accessible,
+                    )? {
+                        thumbs.push(Some(thumb));
+                        continue;
+                    }
                 }
-                if album_id <= 0 {
-                    album_id = file.album_id.unwrap_or(0);
+                if t_utils::content_readable(path) {
+                    AThumb::schedule_background_generation_for_library(
+                        app_handle.clone(),
+                        request.file_id,
+                        path.to_string(),
+                        file.file_type.unwrap_or(0),
+                        file.e_orientation.unwrap_or(1) as i32,
+                        thumbnail_size,
+                        raw_display_options,
+                        album_id,
+                        force_regenerate,
+                        None,
+                    );
                 }
+                thumbs.push(None);
             }
-        }
-
-        let Some(file_path) = file_path else {
-            thumbs.push(None);
-            continue;
-        };
-
-        if let Some(fetched_thumb) = fetched_thumbs.remove(&request.file_id) {
-            if let Some(thumb) = AThumb::resolve_fetched_thumb_if_available(
-                fetched_thumb,
-                &file_path,
-                thumbnail_size,
-                orientation,
-                raw_thumbnail_source == "embedded",
-                force_regenerate,
-                trust_cached,
-            )
-            .map_err(|e| format!("Error while getting thumbnail: {}", e))?
-            {
-                thumbs.push(Some(thumb));
-                continue;
-            }
-        }
-
-        AThumb::schedule_background_generation_for_library(
-            app_handle.clone(),
-            request.file_id,
-            file_path,
-            file_type,
-            orientation,
-            thumbnail_size,
-            raw_thumbnail_source == "embedded",
-            album_id,
-            force_regenerate,
-            None,
-        );
-
-        thumbs.push(None);
-    }
-
-    Ok(thumbs)
+            Ok(thumbs)
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// get a file's info
 #[tauri::command]
 pub fn get_file_info(file_id: i64) -> Result<Option<AFile>, String> {
     AFile::get_file_info(file_id).map_err(|e| format!("Error while getting file info: {}", e))
+}
+
+/// Detail inspection never writes catalog organization metadata or downloads cloud files.
+#[tauri::command]
+pub async fn get_file_metadata_details(
+    file_id: i64,
+    section: String,
+    request_id: String,
+    force: Option<bool>,
+    refresh_key: Option<String>,
+) -> Result<crate::metadata::embedded::Details, String> {
+    let cancelled = crate::metadata::embedded::begin_detail_request(&request_id)?;
+    let _request = crate::metadata::embedded::DetailRequestGuard(request_id);
+    if cancelled.load(std::sync::atomic::Ordering::Relaxed) {
+        return Err("Metadata request cancelled".into());
+    }
+    let file = AFile::get_file_info(file_id)?.ok_or("File not found")?;
+    if !file.album_accessible || file.cloud_only {
+        return Ok(Default::default());
+    }
+    let path = file.file_path.ok_or("File has no path")?;
+    static READS: std::sync::OnceLock<tokio::sync::Semaphore> = std::sync::OnceLock::new();
+    let _permit = READS
+        .get_or_init(|| tokio::sync::Semaphore::new(2))
+        .acquire()
+        .await
+        .map_err(|e| e.to_string())?;
+    if cancelled.load(std::sync::atomic::Ordering::Relaxed) {
+        return Err("Metadata request cancelled".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        if cancelled.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err("Metadata request cancelled".into());
+        }
+        crate::metadata::embedded::read_details(
+            std::path::Path::new(&path),
+            force.unwrap_or(false),
+            &section,
+            refresh_key.as_deref(),
+            Some(&cancelled),
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub fn cancel_file_metadata_requests(request_ids: Vec<String>) -> Result<(), String> {
+    crate::metadata::embedded::cancel_detail_requests(&request_ids)
 }
 
 /// Extract the embedded MP4 from an Android Motion Photo into the cache and
@@ -2676,6 +4136,7 @@ pub fn prepare_motion_photo_video(file_id: i64) -> Result<String, String> {
         .motion_photo_offset
         .filter(|o| *o > 0)
         .ok_or_else(|| "File is not a Motion Photo".to_string())?;
+    t_utils::require_local_content(Path::new(file_path)).map_err(|error| error.to_string())?;
 
     let metadata = fs::metadata(file_path).map_err(|e| format!("Failed to stat file: {}", e))?;
     let mtime_secs = metadata
@@ -2697,6 +4158,8 @@ pub fn prepare_motion_photo_video(file_id: i64) -> Result<String, String> {
     if stored_cache.exists() {
         return Ok(stored_cache.to_string_lossy().into_owned());
     }
+
+    t_utils::require_local_content(Path::new(file_path)).map_err(|error| error.to_string())?;
 
     // Cache miss: re-evaluate at playback time so files indexed before an
     // improved detector use the authoritative XMP offset without a rescan.
@@ -2750,6 +4213,7 @@ fn evict_stale_motion_videos(cache_dir: &Path, file_id: i64, keep: &Path) {
 
 fn extract_embedded_mp4(source: &str, offset: u64, dest: &Path) -> Result<(), String> {
     use std::io::{Read, Seek, SeekFrom, Write};
+    t_utils::require_local_content(Path::new(source)).map_err(|error| error.to_string())?;
     let mut src = fs::File::open(source).map_err(|e| format!("Failed to open source: {}", e))?;
     src.seek(SeekFrom::Start(offset))
         .map_err(|e| format!("Failed to seek to video offset: {}", e))?;
@@ -2792,29 +4256,85 @@ pub fn update_file_info(file_id: i64, file_path: &str) -> Result<Option<AFile>, 
         .map_err(|e| format!("Error while updating file info: {}", e))
 }
 
-/// Force a selected file refresh without accepting a stale frontend file path.
+#[derive(Default, serde::Serialize)]
+pub struct FileRefreshResult {
+    file: AFile,
+    size_delta: i64,
+    /// True when the file was left unread because it is an unchanged cloud-only file.
+    skipped: bool,
+    /// Organization metadata could not be imported; the file metadata is retained.
+    warning: Option<String>,
+    /// A required later stage failed after metadata was already updated.
+    error: Option<String>,
+}
+
 #[tauri::command]
-pub async fn refresh_selected_file_info(library_id: String, file_id: i64) -> Result<Option<AFile>, String> {
+pub fn begin_file_refresh_batch(library_id: String) -> Result<u64, String> {
+    let _guard = FILE_REFRESH_LIBRARY_LOCK.read().map_err(|e| e.to_string())?;
+    if t_config::current_library_id()? != library_id { return Err("Library changed".into()); }
+    crate::metadata::xmp::begin_refresh_batch(library_id)
+}
+
+#[tauri::command]
+pub fn end_file_refresh_batch(batch_id: u64) {
+    crate::metadata::xmp::end_refresh_batch(batch_id);
+}
+
+/// Explicitly replace a video thumbnail without refreshing metadata.
+#[tauri::command]
+pub async fn change_video_thumbnail(
+    library_id: String,
+    file_id: i64,
+    thumbnail_size: u32,
+    seek_percent: u8,
+) -> Result<Option<AThumb>, String> {
+    let _permit = crate::t_sqlite::thumb_background_generation_permits()
+        .acquire_owned().await.map_err(|e| e.to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
-        let _guard = FILE_REFRESH_LIBRARY_LOCK.lock().map_err(|e| e.to_string())?;
-        if t_config::load_app_config()?.current_library_id != library_id {
-            return Err("Library changed".to_string());
-        }
-        let old = AFile::get_file_info(file_id)?.ok_or("File not found")?;
-        let path = old.file_path.as_deref().ok_or("File path missing")?;
-        let updated = AFile::update_file_info(file_id, path, chrono::Utc::now().timestamp_millis())?;
-        if let Some(ref file) = updated {
-            let content_changed = old.modified_at != file.modified_at || old.size != file.size;
-            if content_changed || old.width != file.width || old.height != file.height
-                || old.e_orientation != file.e_orientation {
-                AThumb::delete(file_id)?;
-            }
-            if content_changed {
-                AFile::update_column(file_id, "embeds", &Option::<Vec<u8>>::None)?;
-            }
-        }
-        AFile::get_file_info(file_id)
-    }).await.map_err(|e| format!("File refresh task failed: {e}"))?
+        with_current_library(&library_id, || {
+            let file = AFile::get_file_info(file_id)?.ok_or("File not found")?;
+            if file.file_type != Some(2) { return Err("Not a video".into()); }
+            AThumb::get_or_create_thumb(
+                file_id, file.file_path.as_deref().unwrap_or_default(), 2,
+                file.e_orientation.unwrap_or(1) as i32, thumbnail_size.clamp(64, 2048),
+                RawDisplayOptions::default(), true, file.duration.map(|d| d as u64), Some(seek_percent), false,
+            )
+        })
+    }).await.map_err(|e| format!("Thumbnail task failed: {e}"))?
+}
+
+/// Re-extract local metadata; repair thumbnails only when stale or missing.
+#[tauri::command]
+pub async fn refresh_selected_file_info(
+    library_id: String,
+    file_id: i64,
+    batch_id: Option<u64>,
+    thumbnail_size: Option<u32>,
+    raw_display_options: Option<RawDisplayOptions>,
+) -> Result<Option<FileRefreshResult>, String> {
+    let _permit = crate::t_sqlite::thumb_background_generation_permits()
+        .acquire_owned()
+        .await
+        .map_err(|e| e.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        with_current_library(&library_id, || {
+            let _index = crate::metadata::xmp::refresh_index_scope(batch_id, &library_id)?;
+            let size = thumbnail_size.unwrap_or(512).clamp(64, 2048);
+            let options = raw_display_options.unwrap_or_default();
+            let (refresh, error) =
+                AThumb::refresh_file_and_thumbnail(file_id, size, options, true)?;
+            Ok(Some(FileRefreshResult {
+                file: refresh.file,
+                size_delta: refresh.size_delta,
+                skipped: refresh.skipped,
+                warning: refresh.warning,
+                error,
+                ..Default::default()
+            }))
+        })
+    })
+    .await
+    .map_err(|e| format!("File refresh task failed: {e}"))?
 }
 
 /// add or refresh a file in db and return the indexed file info
@@ -2831,6 +4351,22 @@ pub fn add_file_to_db(folder_id: i64, file_path: &str) -> Result<Option<AFile>, 
 #[tauri::command]
 pub fn check_file_exists(file_path: &str) -> bool {
     Path::new(file_path).exists()
+}
+
+/// Live cloud-only check (the catalog's flag can be stale); reads attributes only.
+#[tauri::command]
+pub async fn is_cloud_only_file(file_path: String) -> bool {
+    tauri::async_runtime::spawn_blocking(move || t_utils::is_cloud_only_path(&file_path))
+        .await
+        .unwrap_or(false)
+}
+
+/// Check readability without decoding or modifying the original.
+#[tauri::command]
+pub async fn check_file_accessibility(file_path: String) -> bool {
+    tauri::async_runtime::spawn_blocking(move || t_utils::file_accessible(&file_path))
+        .await
+        .unwrap_or(false)
 }
 
 /// set a file's rotate status
@@ -2950,36 +4486,55 @@ pub fn batch_update_file_metadata(params: BatchFileMetadataUpdate) -> Result<usi
     .map_err(|e| format!("Error while updating file metadata: {}", e))
 }
 
+// xmp
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct XmpImportSettings {
+    pub import_xmp_sidecars: bool,
+}
+
+#[tauri::command]
+pub fn get_xmp_import_settings() -> XmpImportSettings {
+    XmpImportSettings {
+        import_xmp_sidecars: crate::metadata::xmp::is_xmp_import_enabled(),
+    }
+}
+
+#[tauri::command]
+pub fn set_xmp_import_settings(import_xmp_sidecars: bool) {
+    crate::metadata::xmp::set_xmp_import_enabled(import_xmp_sidecars);
+}
+
+#[tauri::command]
+pub async fn save_xmp_metadata(
+    library_id: String,
+    file_ids: Vec<i64>,
+) -> Result<crate::metadata::xmp::BatchResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let _guard = FILE_REFRESH_LIBRARY_LOCK
+            .read()
+            .map_err(|e| e.to_string())?;
+        if t_config::current_library_id()? != library_id {
+            return Err("Library changed".into());
+        }
+        let conn = crate::t_sqlite::open_conn()?;
+        Ok(crate::metadata::xmp::save_batch(&conn, &file_ids))
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
+}
+
 // tag
 
 #[tauri::command]
-pub fn get_tag_group_name(id: i64) -> Result<String, String> {
-    crate::t_tag_groups::get_name(id)
+pub fn get_tag_subtree_info(tag_id: i64) -> Result<crate::t_tags::SubtreeInfo,String> {
+    crate::t_tags::subtree_info(&*crate::t_sqlite::open_conn()?,tag_id)
 }
 
 #[tauri::command]
-pub fn get_tag_groups() -> Result<Vec<crate::t_tag_groups::TagGroup>, String> {
-    crate::t_tag_groups::get_all()
-}
-
-#[tauri::command]
-pub fn save_tag_group(id: Option<i64>, name: &str) -> Result<i64, String> {
-    crate::t_tag_groups::save(id, name)
-}
-
-#[tauri::command]
-pub fn reorder_tag_groups(ids: Vec<i64>) -> Result<(), String> {
-    crate::t_tag_groups::reorder(&ids)
-}
-
-#[tauri::command]
-pub fn delete_tag_group(id: i64) -> Result<(), String> {
-    crate::t_tag_groups::delete(id)
-}
-
-#[tauri::command]
-pub fn move_tags_to_group(tag_ids: Vec<i64>, group_id: i64) -> Result<(), String> {
-    crate::t_tag_groups::move_tags(&tag_ids, group_id)
+pub fn move_tag(tag_id: i64, parent_id: Option<i64>) -> Result<(), String> {
+    ATag::move_tag(tag_id, parent_id)
 }
 
 /// get all tags
@@ -2997,14 +4552,14 @@ pub fn get_tag_counts() -> Result<HashMap<i64, i64>, String> {
 
 /// get tag name by id
 #[tauri::command]
-pub fn get_tag_name(tag_id: i64, include_group: Option<bool>) -> Result<String, String> {
-    ATag::get_name(tag_id, include_group.unwrap_or(false)).map_err(|e| format!("Error while getting tag name: {}", e))
+pub fn get_tag_name(tag_id: i64) -> Result<String, String> {
+    ATag::get_name(tag_id).map_err(|e| format!("Error while getting tag name: {}", e))
 }
 
 /// create a new tag
 #[tauri::command]
-pub fn create_tag(name: &str, group_id: Option<i64>) -> Result<ATag, String> {
-    ATag::add(name, group_id).map_err(|e| format!("Error while creating tag: {}", e))
+pub fn create_tag(name: &str, parent_id: Option<i64>) -> Result<ATag, String> {
+    ATag::add(name, parent_id).map_err(|e| format!("Error while creating tag: {}", e))
 }
 
 /// rename a tag
@@ -3131,23 +4686,31 @@ pub fn check_ai_status(state: State<t_ai::AiState>) -> String {
 }
 
 #[tauri::command]
-pub fn get_image_search_model_status(
+pub async fn get_image_search_model_status(
     app_handle: AppHandle,
-    state: State<t_ai::AiState>,
-) -> t_ai::ImageSearchModelStatus {
-    let ai_engine = state.0.lock().unwrap();
-    ai_engine.model_status(&app_handle)
+) -> Result<t_ai::ImageSearchModelStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app_handle.state::<t_ai::AiState>();
+        let ai_engine = state.0.lock().map_err(|e| e.to_string())?;
+        Ok(ai_engine.model_status(&app_handle))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 pub async fn set_image_search_model(
     app_handle: AppHandle,
-    state: State<'_, t_ai::AiState>,
     model: i64,
 ) -> Result<t_ai::ImageSearchModelStatus, String> {
-    let mut ai_engine = state.0.lock().unwrap();
-    ai_engine.set_text_model(&app_handle, t_ai::ImageSearchTextModel::from_i64(model))?;
-    Ok(ai_engine.model_status(&app_handle))
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::t_startup::ensure_ai(&app_handle, Some(model))?;
+        let state = app_handle.state::<t_ai::AiState>();
+        let ai_engine = state.0.lock().map_err(|e| e.to_string())?;
+        Ok(ai_engine.model_status(&app_handle))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -3164,18 +4727,39 @@ pub async fn cancel_multilingual_image_search_model_download(
 
 /// generate embedding for a file
 #[tauri::command]
-pub fn generate_embedding(state: State<t_ai::AiState>, file_id: i64) -> Result<String, String> {
-    AFile::generate_embedding(&state, file_id)
+pub async fn generate_embedding(
+    app_handle: AppHandle,
+    file_id: i64,
+    library_id: Option<String>,
+) -> Result<String, String> {
+    let library_id = library_id.unwrap_or(t_config::current_library_id()?);
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::t_startup::ensure_ai(&app_handle, None)?;
+        with_current_library(&library_id, || {
+            AFile::generate_embedding(&app_handle.state::<t_ai::AiState>(), file_id)
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 // search similar images
 #[tauri::command]
 pub async fn search_similar_images(
-    state: State<'_, t_ai::AiState>,
+    app_handle: AppHandle,
     params: ImageSearchParams,
+    library_id: Option<String>,
 ) -> Result<Vec<AFile>, String> {
-    AFile::search_similar_images(&state, params)
-        .map_err(|e| format!("Error while searching similar images: {}", e))
+    let library_id = library_id.unwrap_or(t_config::current_library_id()?);
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::t_startup::ensure_ai(&app_handle, None)?;
+        with_current_library(&library_id, || {
+            AFile::search_similar_images(&app_handle.state::<t_ai::AiState>(), params)
+                .map_err(|e| format!("Error while searching similar images: {}", e))
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -3188,6 +4772,8 @@ pub fn similar_start_scan(
     params: Option<QueryParams>,
     collection_id: Option<i64>,
     file_ids: Option<Vec<i64>>,
+    group_raw_pairs: bool,
+    keep_rules: Option<crate::t_dedup::KeepRules>,
 ) -> Result<(), String> {
     t_similar::start_scan(
         app_handle,
@@ -3198,6 +4784,8 @@ pub fn similar_start_scan(
         params,
         collection_id,
         file_ids,
+        group_raw_pairs,
+        keep_rules,
     )
 }
 
@@ -3218,8 +4806,9 @@ pub fn similar_get_eligible_count(
     params: Option<QueryParams>,
     collection_id: Option<i64>,
     file_ids: Option<Vec<i64>>,
+    group_raw_pairs: bool,
 ) -> Result<u64, String> {
-    t_similar::eligible_count(params, collection_id, file_ids)
+    t_similar::eligible_count(params, collection_id, file_ids, group_raw_pairs)
 }
 
 #[tauri::command]
@@ -3228,13 +4817,13 @@ pub fn similar_list_groups(scope_key: String, limit: i64, offset: i64) -> Result
 }
 
 #[tauri::command]
-pub fn similar_get_overview(scope_key: String) -> Result<serde_json::Value, String> {
-    t_similar::get_overview(&scope_key)
+pub fn similar_get_overview(scope_key: String, group_raw_pairs: bool) -> Result<serde_json::Value, String> {
+    t_similar::get_overview(&scope_key, group_raw_pairs)
 }
 
 #[tauri::command]
-pub fn similar_get_group(group_id: i64, scope_key: String) -> Result<serde_json::Value, String> {
-    t_similar::get_group(group_id, &scope_key)
+pub fn similar_get_group(group_id: i64, scope_key: String, group_raw_pairs: bool) -> Result<serde_json::Value, String> {
+    t_similar::get_group(group_id, &scope_key, group_raw_pairs)
 }
 
 #[tauri::command]
@@ -3362,8 +4951,10 @@ pub fn dedup_start_scan(
     params: Option<crate::t_sqlite::QueryParams>,
     collection_id: Option<i64>,
     file_ids: Option<Vec<i64>>,
+    keep_rules: Option<crate::t_dedup::KeepRules>,
+    group_raw_pairs: Option<bool>,
 ) -> Result<(), String> {
-    crate::t_dedup::start_scan(app_handle, state, params, collection_id, file_ids)
+    crate::t_dedup::start_scan(app_handle, state, params, collection_id, file_ids, keep_rules, group_raw_pairs.unwrap_or(false))
 }
 
 #[tauri::command]
@@ -3391,18 +4982,31 @@ pub fn dedup_list_groups(
     page_size: u32,
     sort_by: String, // E.g., "size_desc", "count_desc"
     filter: String,  // E.g., "all", "unreviewed"
+    group_raw_pairs: bool,
 ) -> Result<Vec<crate::t_dedup::DedupGroup>, String> {
-    crate::t_dedup::list_groups(page, page_size, &sort_by, &filter)
+    crate::t_dedup::list_groups(page, page_size, &sort_by, &filter, group_raw_pairs)
 }
 
 #[tauri::command]
-pub fn dedup_get_overview() -> Result<crate::t_dedup::DedupOverview, String> {
-    crate::t_dedup::get_overview()
+pub async fn dedup_get_overview(library_id: String, group_raw_pairs: bool) -> Result<crate::t_dedup::DedupOverview, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        with_current_library(&library_id, || crate::t_dedup::get_overview(group_raw_pairs))
+    })
+    .await
+    .map_err(|error| format!("Failed to load dedup overview ({error})"))?
 }
 
 #[tauri::command]
-pub fn dedup_set_keep(group_id: i64, file_id: i64) -> Result<(), String> {
-    crate::t_dedup::set_keep(group_id, file_id)
+pub fn dedup_set_keep(group_id: i64, file_id: i64, group_raw_pairs: Option<bool>) -> Result<(), String> {
+    crate::t_dedup::set_keep(group_id, file_id, group_raw_pairs.unwrap_or(false))
+}
+
+#[tauri::command]
+pub fn dedup_get_group_items(
+    group_id: i64,
+    group_raw_pairs: bool,
+) -> Result<Vec<crate::t_dedup::DedupGroupItem>, String> {
+    crate::t_dedup::group_items(group_id, group_raw_pairs)
 }
 
 #[tauri::command]
@@ -3442,4 +5046,156 @@ pub fn restore_databases(
     selections: Vec<t_storage::RestoreSelection>,
 ) -> Result<t_storage::RestoreResult, String> {
     t_storage::restore_databases(&backup_path, &selections)
+}
+
+#[cfg(test)]
+mod system_locale_tests {
+    use super::*;
+
+    #[test]
+    fn regional_identifiers_are_valid_for_intl() {
+        assert_eq!(normalize_locale_identifier("en_CH"), Some("en-CH".into()));
+        assert_eq!(
+            normalize_locale_identifier("fr_CH.UTF-8"),
+            Some("fr-CH".into())
+        );
+        assert_eq!(
+            normalize_locale_identifier("de_DE@euro"),
+            Some("de-DE".into())
+        );
+        assert_eq!(normalize_locale_identifier("C.UTF-8"), Some("en-US".into()));
+        assert_eq!(normalize_locale_identifier("POSIX"), Some("en-US".into()));
+        assert_eq!(normalize_locale_identifier(""), None);
+    }
+
+    #[test]
+    fn linux_uses_time_category_and_ignores_translation_preferences() {
+        let get = |key: &str| match key {
+            "LANGUAGE" | "LC_MESSAGES" | "LANG" => Some("en_US.UTF-8".into()),
+            "LC_TIME" => Some("fr_CH.UTF-8".into()),
+            _ => None,
+        };
+        assert_eq!(time_locale_from_env(get), Some("fr-CH".into()));
+        assert_eq!(
+            time_locale_from_env(|key| {
+                if key == "LC_ALL" {
+                    Some("de_DE.UTF-8".into())
+                } else {
+                    get(key)
+                }
+            }),
+            Some("de-DE".into())
+        );
+        assert_eq!(
+            time_locale_from_env(|key| {
+                if key == "LC_TIME" || key == "LC_ALL" {
+                    Some(String::new())
+                } else {
+                    get(key)
+                }
+            }),
+            Some("en-US".into())
+        );
+        assert_eq!(time_locale_from_env(|_| None), None);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_region_matches_current_locale() {
+        let identifier = objc2_foundation::NSLocale::currentLocale()
+            .localeIdentifier()
+            .to_string();
+        assert_eq!(
+            get_system_region_locale().unwrap(),
+            normalize_locale_identifier(&identifier)
+        );
+        assert!(get_system_region_locale().unwrap().is_some());
+    }
+}
+
+#[cfg(test)]
+mod gstreamer_probe_tests {
+    use super::gstreamer_element_missing;
+
+    #[test]
+    fn only_explicit_missing_element_disables_preview() {
+        let missing = b"No such element or plugin 'autoaudiosink'\n";
+        assert!(gstreamer_element_missing(Some(255), missing));
+        assert!(!gstreamer_element_missing(Some(0), missing));
+        assert!(!gstreamer_element_missing(None, missing));
+        assert!(!gstreamer_element_missing(Some(127), b"error while loading shared libraries"));
+        assert!(!gstreamer_element_missing(Some(1), b"unknown failure"));
+    }
+}
+
+#[cfg(test)]
+mod raw_display_library_tests {
+    use super::with_library_context;
+    use std::sync::{Arc, Mutex, RwLock, TryLockError, mpsc};
+
+    #[test]
+    fn raw_display_rejects_queued_work_after_library_switch() {
+        let lock = RwLock::new(());
+        let mut ran = false;
+        let result = with_library_context(&lock, "library-a", || Ok("library-b".into()), || {
+            ran = true;
+            Ok(())
+        });
+        assert_eq!(result.unwrap_err(), "Library changed");
+        assert!(!ran, "stale requests must not read or write the new database");
+    }
+
+    #[test]
+    fn raw_display_allows_concurrent_readers_while_blocking_switches() {
+        let lock = Arc::new(RwLock::new(()));
+        let (started_tx, started_rx) = mpsc::channel();
+        let mut releases = Vec::new();
+        let mut workers = Vec::new();
+        for _ in 0..4 {
+            let lock = lock.clone();
+            let started = started_tx.clone();
+            let (release_tx, release_rx) = mpsc::channel();
+            releases.push(release_tx);
+            workers.push(std::thread::spawn(move || {
+                with_library_context(&lock, "library-a", || Ok("library-a".into()), || {
+                    started.send(()).unwrap();
+                    release_rx.recv().unwrap();
+                    Ok(())
+                })
+            }));
+        }
+        let concurrent = (0..4).all(|_| started_rx.recv_timeout(std::time::Duration::from_secs(2)).is_ok());
+        let switch_blocked = matches!(lock.try_write(), Err(TryLockError::WouldBlock));
+        for release in releases { release.send(()).unwrap(); }
+        for worker in workers { worker.join().unwrap().unwrap(); }
+        assert!(concurrent, "all four readers must enter before decoding completes");
+        assert!(switch_blocked, "switches must wait until cache writes complete");
+        assert!(lock.try_write().is_ok());
+    }
+
+    #[test]
+    fn raw_display_keeps_library_locked_through_cache_write() {
+        let lock = Arc::new(RwLock::new(()));
+        let current = Arc::new(Mutex::new("library-a".to_string()));
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let worker_lock = lock.clone();
+        let worker_current = current.clone();
+        let worker = std::thread::spawn(move || {
+            with_library_context(&worker_lock, "library-a", || Ok(worker_current.lock().unwrap().clone()), || {
+                started_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+                assert_eq!(*worker_current.lock().unwrap(), "library-a");
+                Ok(())
+            })
+        });
+        started_rx.recv().unwrap();
+        assert!(matches!(lock.try_write(), Err(TryLockError::WouldBlock)));
+        release_tx.send(()).unwrap();
+        worker.join().unwrap().unwrap();
+        let guard = lock.write().unwrap();
+        *current.lock().unwrap() = "library-b".into();
+        drop(guard);
+        assert!(with_library_context(&lock, "library-a", || Ok(current.lock().unwrap().clone()), || Ok(())).is_err());
+    }
 }

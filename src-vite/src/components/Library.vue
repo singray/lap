@@ -185,6 +185,7 @@ import { CULLING, LIB_ITEM, RATE, SIDEBAR, type LibItem } from '@/common/constan
 import { IconFiles, IconHeartFilled, IconRight, IconBolt, IconFlag, IconFlagFilled, IconFlagOff, IconStar, IconStarFilled, IconHistory } from '@/common/icons';
 import { SMART_TAG_CATEGORIES } from '@/common/smartTags';
 import { getLibraryVisibleCounts } from '@/common/api';
+import { useLibraryChangeRefresh } from '@/composables/useLibraryChangeRefresh';
 
 const props = defineProps({
   titlebar: {
@@ -223,6 +224,7 @@ async function refreshLibraryCounts() {
   };
 }
 onMounted(() => { void refreshLibraryCounts(); });
+useLibraryChangeRefresh(refreshLibraryCounts);
 const isActiveLibraryView = () => libConfig.activePane === 'main' && config.main.sidebarIndex === SIDEBAR.LIBRARY;
 watch(() => [config.main.sidebarIndex, libConfig.activePane], () => {
   if (isActiveLibraryView()) void refreshLibraryCounts();

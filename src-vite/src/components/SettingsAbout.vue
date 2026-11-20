@@ -13,25 +13,13 @@
     </div>
 
     <!-- package info -->
-    <div class="w-full max-w-lg rounded-box border border-base-content/5 bg-base-300/30 p-4 shadow-sm">
+    <div class="w-full rounded-box border border-base-content/5 bg-base-300/30 p-4 shadow-sm">
       <div class="space-y-3 text-left">
         <div class="grid grid-cols-[84px_1fr] items-start gap-3 text-sm">
           <div class="text-base-content/30">
             {{ $t('settings.about.package.version') }}
           </div>
-          <div class="flex items-center gap-2">
-            <span>{{ displayVersion }}</span>
-            <button
-              class="badge badge-sm border-0 px-2 py-2 font-medium transition-colors hover:text-primary"
-              :class="isUpdateActionEnabled ? 'badge-primary cursor-pointer' : 'badge-neutral/60 cursor-pointer'"
-              :disabled="isInstallingUpdate || isCheckingUpdate"
-              :title="updateButtonTooltip"
-              @click="handleUpdateAction"
-            >
-              <span v-if="isInstallingUpdate || isCheckingUpdate" class="loading loading-spinner loading-xs"></span>
-              <span>{{ updateButtonText }}</span>
-            </button>
-          </div>
+          <div>{{ displayVersion }}</div>
         </div>
 
         <div class="grid grid-cols-[84px_1fr] items-start gap-3 text-sm">
@@ -89,6 +77,38 @@
         </div>
       </div>
     </div>
+
+    <!-- updates -->
+    <div class="w-full rounded-box p-2 space-y-2 bg-base-300/30 border border-base-content/5 shadow-sm">
+      <div class="flex items-center gap-2 text-base-content/30">
+        <span class="font-bold uppercase text-[10px] tracking-widest">{{ $t('settings.about.section_updates') }}</span>
+      </div>
+      <div class="flex items-center justify-between gap-4 px-1 rounded-box hover:bg-base-100/10 transition-colors duration-200">
+        <div class="min-w-0 flex-1 flex flex-col gap-0.5 text-sm leading-5">
+          <div>{{ updateStatusText }}</div>
+          <progress
+            v-if="isDownloadingUpdate"
+            class="progress progress-primary mt-1 h-1.5 w-full"
+            :value="downloadPercent === null ? undefined : downloadPercent"
+            max="100"
+          ></progress>
+        </div>
+        <button
+          class="btn btn-sm btn-ghost rounded-box bg-base-100 border border-base-content/30 text-base-content/70 hover:text-base-content shrink-0"
+          :disabled="isCheckingUpdate || isInstallingUpdate || isDownloadingUpdate"
+          @click="handleUpdateAction"
+        >
+          <span v-if="isCheckingUpdate || isInstallingUpdate || isDownloadingUpdate" class="loading loading-spinner loading-xs"></span>
+          <span v-else>{{ updateButtonText }}</span>
+        </button>
+      </div>
+      <div class="flex items-center justify-between gap-4 px-1 rounded-box hover:bg-base-100/10 transition-colors duration-200">
+        <div class="flex flex-col gap-0.5 text-sm leading-5">
+          <div>{{ $t('settings.general.auto_check_updates') }}</div>
+        </div>
+        <input type="checkbox" class="toggle toggle-primary toggle-sm" v-model="config.settings.autoCheckUpdates" />
+      </div>
+    </div>
   </div>
 </template>
 
@@ -97,6 +117,7 @@ import { computed, ref, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { getPackageInfo, getBuildTime } from '@/common/api';
 import { useAppUpdater } from '@/common/updater';
+import { config } from '@/common/config';
 import { IconGithub, IconLink, IconLock, IconFocus } from '@/common/icons';
 import iconLogo from '@/assets/images/icon.png';
 
@@ -131,11 +152,30 @@ const localeMsg = computed(() => messages.value[locale.value] as any);
 const {
   isCheckingUpdate,
   isInstallingUpdate,
-  updateButtonTooltip,
+  isDownloadingUpdate,
+  isUpdateReadyToRestart,
+  updateAvailable,
+  updateVersion,
+  downloadProgressLabel,
+  downloadPercent,
+  checkError,
   updateButtonText,
-  isUpdateActionEnabled,
   handleUpdateAction,
-} = useAppUpdater(localeMsg, { toastPlacement: 'center' });
+} = useAppUpdater(localeMsg, { toastPlacement: 'center', silent: true });
+
+// Status line for the Updates section: reflects the current update state.
+const updateStatusText = computed(() => {
+  const au = localeMsg.value.settings.about.auto_update;
+  if (isDownloadingUpdate.value) return downloadProgressLabel.value;
+  if (isInstallingUpdate.value) return au.installing;
+  if (isCheckingUpdate.value) return au.checking;
+  if (checkError.value) return checkError.value;
+  if (isUpdateReadyToRestart.value) return au.update_installed_waiting_restart;
+  if (updateAvailable.value && updateVersion.value) {
+    return au.new_version_available.replace('{version}', updateVersion.value);
+  }
+  return au.latest_version;
+});
 
 onMounted(async () => {
   try {

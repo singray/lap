@@ -158,6 +158,37 @@ fn get_migrations() -> Vec<Migration> {
             description: "Album scan scope and pixel filters",
             sql: "",
         },
+        Migration {
+            version: 19,
+            description: "Cloud-only file state",
+            sql: "",
+        },
+        Migration {
+            version: 20,
+            description: "Stored image color profile, color space and bit depth",
+            sql: "",
+        },
+        Migration {
+            version: 21,
+            description: "Replace tag groups with hierarchical tags",
+            sql: "",
+        },
+        Migration {
+            version: 22,
+            description: "Stored metadata title and headline",
+            sql: "",
+        },
+        Migration {
+            version: 23,
+            description: "Record tag creation source",
+            sql: "",
+        },
+        Migration {
+            version: 24,
+            description: "Index search exclusions by album",
+            sql: "CREATE INDEX IF NOT EXISTS idx_afolders_excluded_album
+                  ON afolders(album_id) WHERE is_excluded_from_search = 1;",
+        },
     ]
 }
 
@@ -488,6 +519,48 @@ pub fn check_and_migrate(conn: &Connection) -> Result<(), String> {
                     }
                 }
                 tx.commit().map_err(|e| e.to_string())?;
+            } else if migration.version == 19 {
+                let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+                for column in ["cloud_only", "metadata_pending"] {
+                    if !table_has_column(&tx, "afiles", column)? {
+                        tx.execute(&format!("ALTER TABLE afiles ADD COLUMN {column} INTEGER NOT NULL DEFAULT 0"), [])
+                            .map_err(|e| e.to_string())?;
+                    }
+                }
+                tx.commit().map_err(|e| e.to_string())?;
+            } else if migration.version == 20 {
+                let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+                for (column, definition) in [("icc_profile", "TEXT"), ("color_space", "TEXT"), ("bit_depth", "INTEGER")] {
+                    if !table_has_column(&tx, "afiles", column)? {
+                        tx.execute(&format!("ALTER TABLE afiles ADD COLUMN {column} {definition}"), [])
+                            .map_err(|e| format!("Migration {} failed adding {column}: {e}", migration.version))?;
+                    }
+                }
+                // Schedule one content read; empty color fields are valid after extraction.
+                tx.execute("UPDATE afiles SET metadata_pending=1 WHERE file_type IN (1,3)", [])
+                    .map_err(|e| format!("Migration 20 failed marking metadata pending: {e}"))?;
+                // Schema, pending markers and version advance together.
+                tx.pragma_update(None, "user_version", migration.version).map_err(|e| e.to_string())?;
+                tx.commit().map_err(|e| e.to_string())?;
+            } else if migration.version == 22 {
+                let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+                for column in ["e_title", "e_headline"] {
+                    if !table_has_column(&tx, "afiles", column)? {
+                        tx.execute(&format!("ALTER TABLE afiles ADD COLUMN {column} TEXT"), []).map_err(|e| e.to_string())?;
+                    }
+                }
+                tx.pragma_update(None, "user_version", migration.version).map_err(|e| e.to_string())?;
+                tx.commit().map_err(|e| e.to_string())?;
+            } else if migration.version == 23 {
+                let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+                if !table_has_column(&tx, "atags", "source")? {
+                    tx.execute("ALTER TABLE atags ADD COLUMN source TEXT", [])
+                        .map_err(|e| format!("Migration 23 failed: {e}"))?;
+                }
+                tx.pragma_update(None, "user_version", migration.version).map_err(|e| e.to_string())?;
+                tx.commit().map_err(|e| e.to_string())?;
+            } else if migration.version == 21 {
+                migrate_tag_tree(conn)?;
             } else if !migration.sql.trim().is_empty() {
                 conn.execute_batch(migration.sql)
                     .map_err(|e| format!("Migration {} failed: {}", migration.version, e))?;
@@ -549,10 +622,104 @@ pub(crate) fn migrate_tag_groups(conn: &Connection) -> Result<(), String> {
 mod album_filter_migration_tests {
     use super::*;
 
+    /// Folders hidden from search: an excluded folder hides itself and its
+    /// subfolders, only within its own album.
+    const VISIBLE_FOLDERS: &str = "SELECT b.id FROM afolders b WHERE NOT EXISTS (
+        SELECT 1 FROM afolders xf
+        WHERE xf.is_excluded_from_search = 1 AND xf.album_id = b.album_id
+          AND (xf.path = b.path OR instr(b.path, xf.path || '/') = 1)
+    ) ORDER BY b.id";
+
+    fn exclusion_fixture(rows: &str) -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(&format!(
+            "CREATE TABLE afolders(id INTEGER PRIMARY KEY, album_id INTEGER, inode INTEGER,
+                                   path TEXT, is_excluded_from_search INTEGER);
+             CREATE INDEX idx_afolders_album_inode ON afolders(album_id, inode);
+             CREATE INDEX idx_afolders_is_excluded_from_search ON afolders(is_excluded_from_search);
+             {rows}
+             PRAGMA user_version=23;"
+        ))
+        .unwrap();
+        conn
+    }
+
+    fn visible(conn: &Connection) -> Vec<i64> {
+        conn.prepare(VISIBLE_FOLDERS).unwrap()
+            .query_map([], |row| row.get::<_, i64>(0)).unwrap()
+            .collect::<Result<Vec<_>, _>>().unwrap()
+    }
+
+    fn has_exclusion_index(conn: &Connection) -> bool {
+        conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_afolders_excluded_album'",
+            [], |row| row.get::<_, i64>(0)).unwrap() == 1
+    }
+
+    #[test]
+    fn upgrading_from_version_23_creates_the_exclusion_index() {
+        let conn = exclusion_fixture("");
+        assert!(!has_exclusion_index(&conn));
+        check_and_migrate(&conn).unwrap();
+        assert!(has_exclusion_index(&conn));
+        assert_eq!(conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 24);
+        // Running again changes nothing.
+        check_and_migrate(&conn).unwrap();
+        assert!(has_exclusion_index(&conn));
+        assert_eq!(conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 24);
+    }
+
+    #[test]
+    fn exclusion_index_restricts_the_search_to_excluded_folders_in_the_same_album() {
+        // Album 1 excludes /photos/skip (and so its child); a neighbour with a
+        // similar name and the same path in album 2 stay visible.
+        let conn = exclusion_fixture(
+            "INSERT INTO afolders VALUES
+                 (1, 1, 1, '/photos/skip', 1), (2, 1, 2, '/photos/skip/child', 0),
+                 (3, 1, 3, '/photos/skip-neighbor', 0), (4, 2, 4, '/photos/skip/child', 0);",
+        );
+        assert_eq!(visible(&conn), [3, 4]);
+        check_and_migrate(&conn).unwrap();
+        assert_eq!(visible(&conn), [3, 4]);
+        let plan = format!("EXPLAIN QUERY PLAN {VISIBLE_FOLDERS}");
+        let details = conn.prepare(&plan).unwrap().query_map([], |row| row.get::<_, String>(3))
+            .unwrap().collect::<Result<Vec<_>, _>>().unwrap();
+        assert!(details.iter().any(|line| line.contains("idx_afolders_excluded_album")
+            && line.contains("album_id=?")), "{details:?}");
+    }
+
+    #[test]
+    fn with_no_excluded_folders_every_folder_stays_visible() {
+        let conn = exclusion_fixture(
+            "INSERT INTO afolders VALUES
+                 (1, 1, 1, '/photos/a', 0), (2, 1, 2, '/photos/a/b', 0), (3, 2, 3, '/other', 0);",
+        );
+        check_and_migrate(&conn).unwrap();
+        assert_eq!(visible(&conn), [1, 2, 3]);
+    }
+
+    #[test]
+    fn image_properties_schedule_one_backfill_without_clearing_other_pending_work() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE atags(id INTEGER PRIMARY KEY,name TEXT NOT NULL UNIQUE);").unwrap();
+        conn.execute_batch("CREATE TABLE afiles(id INTEGER PRIMARY KEY, file_type INTEGER, metadata_pending INTEGER NOT NULL DEFAULT 0);
+            INSERT INTO afiles VALUES(1,1,0),(2,3,0),(3,2,0),(4,2,1);
+            CREATE TABLE afolders(id INTEGER PRIMARY KEY, album_id INTEGER, path TEXT, is_excluded_from_search INTEGER); 
+            PRAGMA user_version=19;").unwrap();
+        check_and_migrate(&conn).unwrap();
+        let pending: Vec<i64> = conn.prepare("SELECT metadata_pending FROM afiles ORDER BY id").unwrap()
+            .query_map([], |row| row.get(0)).unwrap().map(Result::unwrap).collect();
+        assert_eq!(pending, vec![1, 1, 0, 1]);
+        conn.execute("UPDATE afiles SET metadata_pending=0", []).unwrap();
+        check_and_migrate(&conn).unwrap();
+        assert_eq!(conn.query_row("SELECT SUM(metadata_pending) FROM afiles", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
+    }
+
     #[test]
     fn album_filter_migration_is_restartable_and_defaults_to_off() {
         let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch("CREATE TABLE albums(id INTEGER PRIMARY KEY); INSERT INTO albums VALUES(1); PRAGMA user_version=17;").unwrap();
+        conn.execute_batch("CREATE TABLE atags(id INTEGER PRIMARY KEY,name TEXT NOT NULL UNIQUE);").unwrap();
+        conn.execute_batch("CREATE TABLE albums(id INTEGER PRIMARY KEY); CREATE TABLE afiles(id INTEGER PRIMARY KEY, file_type INTEGER); INSERT INTO albums VALUES(1); CREATE TABLE afolders(id INTEGER PRIMARY KEY, album_id INTEGER, path TEXT, is_excluded_from_search INTEGER); PRAGMA user_version=17;").unwrap();
         check_and_migrate(&conn).unwrap();
         let settings: (i64, Option<i64>, String) = conn.query_row(
             "SELECT file_types,small_image_filter,excluded_folders FROM albums", [],
@@ -561,6 +728,184 @@ mod album_filter_migration_tests {
         // Simulate migration completing before the version was persisted.
         conn.execute_batch("PRAGMA user_version=17;").unwrap();
         check_and_migrate(&conn).unwrap();
-        assert_eq!(conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(),18);
+        assert_eq!(conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(),24);
+    }
+
+    #[test]
+    fn cloud_state_migration_is_restartable_and_defaults_to_local() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE atags(id INTEGER PRIMARY KEY,name TEXT NOT NULL UNIQUE);").unwrap();
+        conn.execute_batch("CREATE TABLE afiles(id INTEGER PRIMARY KEY, file_type INTEGER); INSERT INTO afiles(id) VALUES(1); CREATE TABLE afolders(id INTEGER PRIMARY KEY, album_id INTEGER, path TEXT, is_excluded_from_search INTEGER); PRAGMA user_version=18;").unwrap();
+        check_and_migrate(&conn).unwrap();
+        let state: (i64, i64) = conn.query_row("SELECT cloud_only, metadata_pending FROM afiles", [],
+            |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
+        assert_eq!(state, (0, 0));
+        // Simulate migration completing before the version was persisted.
+        conn.execute_batch("PRAGMA user_version=18;").unwrap();
+        check_and_migrate(&conn).unwrap();
+        assert_eq!(conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(), 24);
+    }
+
+    #[test]
+    fn title_migration_is_restartable_without_scheduling_thumbnail_work() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE atags(id INTEGER PRIMARY KEY); CREATE TABLE afiles(id INTEGER PRIMARY KEY,metadata_pending INTEGER DEFAULT 0); INSERT INTO afiles(id) VALUES(1); CREATE TABLE afolders(id INTEGER PRIMARY KEY, album_id INTEGER, path TEXT, is_excluded_from_search INTEGER); PRAGMA user_version=21;").unwrap();
+        check_and_migrate(&conn).unwrap();
+        let values: (Option<String>,Option<String>,i32) = conn.query_row(
+            "SELECT e_title,e_headline,metadata_pending FROM afiles", [],
+            |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?))).unwrap();
+        assert_eq!(values, (None,None,0));
+        conn.execute_batch("UPDATE afiles SET e_title='Existing'; PRAGMA user_version=21;").unwrap();
+        check_and_migrate(&conn).unwrap();
+        assert_eq!(conn.query_row("SELECT e_title FROM afiles", [], |r| r.get::<_,String>(0)).unwrap(), "Existing");
+        assert_eq!(conn.query_row("PRAGMA user_version", [], |r| r.get::<_,i32>(0)).unwrap(), 24);
+    }
+}
+
+
+/// Rebuild only the tag table: preserve IDs, spelling and every file association.
+pub(crate) fn migrate_tag_tree(conn: &Connection) -> Result<(), String> {
+    if table_has_column(conn, "atags", "parent_id")? {
+        return crate::t_tags::initialize(conn);
+    }
+    let foreign_keys: bool = conn
+        .pragma_query_value(None, "foreign_keys", |r| r.get(0))
+        .map_err(|e| e.to_string())?;
+    conn.pragma_update(None, "foreign_keys", false)
+        .map_err(|e| e.to_string())?;
+    let result = (|| {
+        let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+        tx.execute_batch(
+            "CREATE TABLE atags_tree (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
+            parent_id INTEGER REFERENCES atags(id) ON DELETE CASCADE);
+            INSERT INTO atags_tree(id,name) SELECT id,name FROM atags;
+            UPDATE sqlite_sequence SET seq=MAX(seq,COALESCE(
+                (SELECT seq FROM sqlite_sequence WHERE name='atags'),0)) WHERE name='atags_tree';
+            DROP TABLE atags;
+            ALTER TABLE atags_tree RENAME TO atags;
+            DROP TRIGGER IF EXISTS protect_default_tag_group_delete;
+            DROP TRIGGER IF EXISTS protect_default_tag_group_update;
+            DROP TABLE IF EXISTS atag_groups;",
+        )
+        .map_err(|e| e.to_string())?;
+        crate::t_tags::initialize(&tx)?;
+        tx.pragma_update(None, "user_version", 21)
+            .map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())
+    })();
+    conn.pragma_update(None, "foreign_keys", foreign_keys)
+        .map_err(|e| e.to_string())?;
+    result
+}
+
+#[cfg(test)]
+mod tag_tree_migration_tests {
+    use super::*;
+
+    fn fixture() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;
+            CREATE TABLE atag_groups(id INTEGER PRIMARY KEY,name TEXT);
+            INSERT INTO atag_groups VALUES(1,'Default'),(2,'Travel');
+            CREATE TABLE atags(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL UNIQUE,group_id INTEGER REFERENCES atag_groups(id));
+            INSERT INTO atags VALUES(10,'Paris',2),(20,'literal|text',1);
+            UPDATE sqlite_sequence SET seq=99 WHERE name='atags';
+            CREATE TABLE afiles(id INTEGER PRIMARY KEY);INSERT INTO afiles VALUES(1);
+            CREATE TABLE afile_tags(file_id INTEGER REFERENCES afiles(id) ON DELETE CASCADE,tag_id INTEGER REFERENCES atags(id) ON DELETE CASCADE,PRIMARY KEY(file_id,tag_id));
+            INSERT INTO afile_tags VALUES(1,10),(1,20);
+            CREATE TABLE axmp_imports(file_id INTEGER PRIMARY KEY,dirty INTEGER);INSERT INTO axmp_imports VALUES(1,0);
+            PRAGMA user_version=20;").unwrap();
+        conn
+    }
+
+    #[test]
+    fn migration_keeps_ids_links_and_literal_names_and_removes_groups() {
+        let conn = fixture();
+        migrate_tag_tree(&conn).unwrap();
+        migrate_tag_tree(&conn).unwrap();
+        let tags: Vec<(i64, String, Option<i64>)> = conn
+            .prepare("SELECT id,name,parent_id FROM atags ORDER BY id")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        assert_eq!(
+            tags,
+            vec![
+                (10, "Paris".into(), None),
+                (20, "literal|text".into(), None)
+            ]
+        );
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM afile_tags", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name='atag_groups'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            0
+        );
+        assert_eq!(
+            conn.query_row("PRAGMA foreign_keys", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            21
+        );
+        assert_eq!(
+            conn.query_row("SELECT dirty FROM axmp_imports", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        assert!(!conn
+            .prepare("PRAGMA foreign_key_check")
+            .unwrap()
+            .query([])
+            .unwrap()
+            .next()
+            .unwrap()
+            .is_some());
+        assert!(conn
+            .execute("INSERT INTO atags(name) VALUES('paris')", [])
+            .is_err());
+        conn.execute("INSERT INTO atags(name,parent_id) VALUES('Paris',20)", [])
+            .unwrap();
+        assert!(conn.last_insert_rowid() > 99);
+    }
+
+    #[test]
+    fn failed_migration_rolls_back_and_restores_foreign_keys() {
+        let conn = fixture();
+        conn.execute("INSERT INTO atags(name,group_id) VALUES('PARIS',1)", [])
+            .unwrap();
+        assert!(migrate_tag_tree(&conn).is_err());
+        assert!(!table_has_column(&conn, "atags", "parent_id").unwrap());
+        assert_eq!(
+            conn.query_row("PRAGMA foreign_keys", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            20
+        );
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM afile_tags", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            2
+        );
     }
 }

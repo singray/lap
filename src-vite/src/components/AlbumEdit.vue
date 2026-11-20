@@ -32,6 +32,7 @@
               :value="selectedFolder"
               class="w-full bg-transparent border-none p-0 text-[12px] text-base-content/70 focus:border-none focus:ring-0 focus:outline-none"
             />
+            <IconExclamation v-if="!isNewAlbum && album?.is_accessible === false" class="size-4 shrink-0 text-warning/70" :aria-label="t('offline.original_unavailable')" />
             <button v-if="selectedFolder === ''"
               class="btn btn-primary btn-sm rounded-box"
               @click="clickSelectFolder"
@@ -44,12 +45,6 @@
               :selected="true"
               @click="clickSelectFolder"
             />
-            </div>
-            <div
-              v-if="!isNewAlbum && album?.is_accessible === false"
-              class="text-[11px] leading-4 text-warning"
-            >
-              {{ $t('album.folder_unavailable.title') }}
             </div>
           </div>
 
@@ -128,7 +123,10 @@
           <div v-if="displaySkippedCount > 0" class="h-6 flex items-center text-[12px] text-base-content/70">
             {{ $t('album.edit.files_count', { count: displaySkippedCount.toLocaleString(), size: formatFileSize(displaySkippedSize) }) }}
           </div>
-          <div v-if="!isScanning && mergedFileCount > 0" class="h-6 flex items-center text-[11px] text-base-content/30">{{ $t('album.edit.merged_files') }}</div>
+          <div v-if="!isScanning && mergedFileCount > 0" class="min-h-6 flex items-center gap-0.5 text-[11px] leading-4 text-base-content/30">
+            <span>{{ $t('album.edit.merged_files') }}</span>
+            <InfoTooltip v-if="activeTab === 'general'" :label="$t('album.edit.merged_files')" :text="$t('album.edit.merged_files_hint')" />
+          </div>
           <div v-if="!isScanning && mergedFileCount > 0" class="h-6 flex items-center text-[12px] text-base-content/70">
             {{ formatFileCount(mergedFileCount, mergedFileSize) }}
           </div>
@@ -226,23 +224,23 @@
         <span class="font-bold uppercase text-[10px] tracking-widest">{{ $t('album.edit.section_scan_preview') }}</span>
       </div>
       <div class="grid grid-cols-[84px_1fr] gap-x-4 gap-y-1.5 items-center px-1 text-xs">
-        <div class="min-h-6 flex items-center text-[11px] text-base-content/45">{{ $t('album.edit.files_to_scan') }}</div>
-        <div class="min-h-6 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-base-content/75">
+        <div class="min-h-6 flex items-center text-[11px] text-base-content/30">{{ $t('album.edit.files_to_scan') }}</div>
+        <div class="min-h-6 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-base-content/70">
           <span v-if="previewError" class="text-warning">{{ $t('album.edit.preview_unavailable') }}</span>
           <template v-else>
             <span v-if="previewCount !== null">{{ $t('album.edit.files_count', { count: previewCount.toLocaleString(), size: formatFileSize(previewSize) }) }}</span>
-            <span v-if="previewLoading" class="flex items-center gap-1 text-[11px] text-base-content/45">
+            <span v-if="previewLoading" class="flex items-center gap-1 text-[11px] text-base-content/30">
               <span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
               {{ $t(previewCount === null ? 'album.edit.files_counting' : 'album.edit.preview_updating') }}
             </span>
           </template>
         </div>
-        <div class="min-h-6 flex items-center text-[11px] text-base-content/45">{{ $t('album.edit.excluded_files') }}</div>
-        <div class="min-h-6 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-base-content/75">
+        <div class="min-h-6 flex items-center text-[11px] text-base-content/30">{{ $t('album.edit.excluded_files') }}</div>
+        <div class="min-h-6 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-base-content/70">
           <span v-if="previewError" class="text-warning">{{ $t('album.edit.preview_unavailable') }}</span>
           <template v-else>
             <span v-if="excludedPreviewCount !== null">{{ $t('album.edit.files_count', { count: excludedPreviewCount.toLocaleString(), size: formatFileSize(excludedPreviewSize) }) }}</span>
-            <span v-if="previewLoading" class="flex items-center gap-1 text-[11px] text-base-content/45">
+            <span v-if="previewLoading" class="flex items-center gap-1 text-[11px] text-base-content/30">
               <span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
               {{ $t(excludedPreviewCount === null ? 'album.edit.files_counting' : 'album.edit.preview_updating') }}
             </span>
@@ -286,7 +284,8 @@ import { getAlbumScanState } from '@/common/scanStatus';
 
 import ModalDialog from '@/components/ModalDialog.vue';
 import TButton from '@/components/TButton.vue';
-import { IconEdit, IconNewFolder, IconFolder, IconSearch, IconClose } from '@/common/icons';
+import InfoTooltip from '@/components/InfoTooltip.vue';
+import { IconEdit, IconNewFolder, IconFolder, IconSearch, IconClose, IconExclamation } from '@/common/icons';
 
 const props = defineProps({
   busy: { type: Boolean, default: false },
@@ -307,9 +306,9 @@ const { t } = useI18n();
 const toast = useToast();
 const isNewAlbum = computed(() => props.albumId <= 0);
 const album = ref<any>(null);
-const createdAt = computed(() => formatTimestamp(Number(album.value?.created_at || 0), t('format.date_time')));
-const modifiedAt = computed(() => formatTimestamp(Number(album.value?.modified_at || 0), t('format.date_time')));
-const lastScanTime = computed(() => formatTimestamp(Number(album.value?.last_scan_time || 0) / 1000, t('format.date_time')));
+const createdAt = computed(() => formatTimestamp(Number(album.value?.created_at || 0), 'date_time'));
+const modifiedAt = computed(() => formatTimestamp(Number(album.value?.modified_at || 0), 'date_time'));
+const lastScanTime = computed(() => formatTimestamp(Number(album.value?.last_scan_time || 0) / 1000, 'date_time'));
 
 // select folder
 const selectedFolder = ref('');
@@ -323,7 +322,7 @@ const isFolderSearchFocused = ref(false);
 const foldersLoading = ref(false);
 const foldersError = ref(false);
 const fileTypeOptions = [
-  { value: 1, label: 'album.edit.photos' },
+  { value: 1, label: 'album.edit.images' },
   { value: 4, label: 'album.edit.raw' },
   { value: 2, label: 'album.edit.videos' },
 ];

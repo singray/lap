@@ -37,7 +37,8 @@
               </div>
             </transition>
 
-            <template v-if="imageSrc">
+            <p v-if="originalUnavailable" class="p-4 text-sm text-base-content/70">{{ t('offline.requires_original') }}</p>
+            <template v-else-if="imageSrc">
               <figure
                 v-if="showDiffPreview && canShowDiffPreview"
                 class="diff absolute inset-0 z-20 h-full w-full"
@@ -138,7 +139,7 @@
         <!-- straighten angle + crop confirm/cancel -->
         <div
           v-if="cropStatus === 1"
-          class="w-full max-w-2xl shrink-0 flex items-center gap-3 px-4"
+          class="w-full max-w-xl shrink-0 flex items-center gap-3 px-4"
         >
           <div
             class="flex items-center gap-3 flex-1 min-w-0"
@@ -146,19 +147,17 @@
             @pointerup="isRotating = false"
             @pointercancel="isRotating = false"
           >
-            <span class="text-xs font-medium text-base-content/50 shrink-0">{{ $t('msgbox.image_editor.angle') }}</span>
             <AngleSlider
               v-model="cropAngleModel"
               :min="-45"
               :max="45"
               :step="1"
+              :aria-label="$t('msgbox.image_editor.angle')"
               class="flex-1 min-w-0"
             />
           </div>
 
-          <div class="w-px h-5 bg-base-content/10 shrink-0"></div>
-
-          <div class="flex items-center gap-1 shrink-0">
+          <div class="flex items-center gap-1 shrink-0 translate-y-2.5">
             <TButton
               buttonSize="small"
               :icon="IconClose"
@@ -553,11 +552,15 @@ import { useRouter } from 'vue-router';
 import { useUIStore } from '@/stores/uiStore';
 import { useI18n } from 'vue-i18n';
 import { config } from '@/common/config';
-import { isWin, isLinux, setTheme, SCALE_VALUES, getFolderPath, getFileExtension, shortenFilename, getFullPath, combineFileName, getSelectOptions, getAssetSrc, getPreviewUrl, getThumbUrl, shouldUseBackendPreview } from '@/common/utils';
-import { editImage, checkFileExists, getFileInfo } from '@/common/api';
+import { isWin, isLinux, SCALE_VALUES, getFolderPath, getFileExtension, shortenFilename, getFullPath, combineFileName, getSelectOptions, getAssetSrc, getPreviewUrl, getThumbUrl, shouldUseBackendPreview } from '@/common/utils';
+import { editImage, checkFileExists, getFileInfo, isCloudOnlyFile } from '@/common/api';
 import { getMaxInscribedRect, clampCenterInRotatedRect, maxResizeT } from '@/common/geometry';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { emit as tauriEmit, listen } from '@tauri-apps/api/event';
+
+watch(() => config.imageEditor, (preferences) => {
+  void tauriEmit('image-editor-config-changed', JSON.parse(JSON.stringify(preferences)));
+}, { deep: true });
 
 import TitleBar from '@/components/TitleBar.vue';
 import MessageBox from '@/components/MessageBox.vue';
@@ -589,7 +592,7 @@ const router = useRouter();
 const fileInfo = ref<any>(null);
 const initialImageSrc = ref('');
 
-const { locale, messages } = useI18n();
+const { locale, messages, t } = useI18n();
 const localeMsg = computed(() => messages.value[locale.value] as any);
 
 const uiStore = useUIStore();
@@ -637,7 +640,7 @@ async function loadFileInfo(fileId: number) {
         file.file_path,
         false,
         Number(file.modified_at || 0),
-        config.settings.rawThumbnailSource,
+        true, // Match the export decoder and pixel coordinates.
       );
       initialImageSrc.value = typeof src === 'string' ? src : '';
     }
@@ -659,6 +662,7 @@ const imageRef = ref<HTMLImageElement | null>(null);
 const imageRect = ref<DOMRect | null>(null);
 const imageRectOriginal = ref<DOMRect | null>(null);
 const imageSrc = ref('');
+const originalUnavailable = ref(false);
 const imageWidth = ref(0);
 const imageHeight = ref(0);
 const isRawFile = computed(() => Number(fileInfo.value?.file_type || 0) === 3);
@@ -1328,18 +1332,6 @@ watch(() => config.settings.language, (newLanguage) => {
   locale.value = newLanguage;
 });
 
-watch(() => config.settings.appearance, (newAppearance) => {
-  setTheme(newAppearance, newAppearance === 0 ? config.settings.lightTheme : config.settings.darkTheme);
-});
-
-watch(() => config.settings.lightTheme, (newLightTheme) => {
-  setTheme(config.settings.appearance, newLightTheme);
-});
-
-watch(() => config.settings.darkTheme, (newDarkTheme) => {
-  setTheme(config.settings.appearance, newDarkTheme);
-});
-
 watch(() => Number(config.settings.scale || 1), (newScale) => {
   const normalizedScale = SCALE_VALUES.find((item) => item === newScale) ?? 1;
   document.documentElement.style.fontSize = `${normalizedScale * 16}px`;
@@ -1406,6 +1398,7 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  initEditImageLoadingId.value++;
   window.removeEventListener('keydown', handleKeyDown);
   uiStore.removeInputHandler('EditImage');
   if (containerResizeObserver) {
@@ -1443,6 +1436,17 @@ const initEditImageLoadingId = ref(0);
 const initEditImage = async () => {
   initEditImageLoadingId.value++;
   const loadingId = initEditImageLoadingId.value;
+  const filePath = fileInfo.value.file_path;
+  originalUnavailable.value = false;
+  const cloudOnly = await isCloudOnlyFile(filePath);
+  if (loadingId !== initEditImageLoadingId.value) return;
+  if (cloudOnly) {
+    originalUnavailable.value = true;
+    imageSrc.value = '';
+    imageReady.value = false;
+    isProcessing.value = false;
+    return;
+  }
 
   if (usesBackendPreview.value) {
     if (initialImageSrc.value) {
@@ -1457,7 +1461,7 @@ const initEditImage = async () => {
           fileInfo.value.file_path,
           false,
           Number(fileInfo.value.modified_at || 0),
-          config.settings.rawThumbnailSource,
+          true, // Match the export decoder and pixel coordinates.
         );
         if (previewSrc) {
           imageSrc.value = previewSrc;
@@ -1467,7 +1471,7 @@ const initEditImage = async () => {
       }
     })();
   } else {
-    imageSrc.value = getAssetSrc(fileInfo.value.file_path);
+    imageSrc.value = getAssetSrc(filePath);
   }
 
   imageWidth.value = fileInfo.value.width;

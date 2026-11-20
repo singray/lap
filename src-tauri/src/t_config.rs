@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock, RwLock};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
@@ -19,6 +19,15 @@ use crate::t_storage;
 
 static APP_IDENTIFIER: OnceLock<String> = OnceLock::new();
 static CONFIG_IO_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+static CURRENT_LIBRARY_ID: RwLock<Option<String>> = RwLock::new(None);
+
+pub fn current_library_id() -> Result<String, String> {
+    if let Some(id) = CURRENT_LIBRARY_ID.read().map_err(|e| e.to_string())?.clone() {
+        return Ok(id);
+    }
+    Ok(load_app_config()?.current_library_id)
+}
+
 
 pub fn set_app_identifier(identifier: &str) {
     let _ = APP_IDENTIFIER.set(identifier.to_string());
@@ -220,9 +229,7 @@ impl Default for CullingState {
 pub struct TagState {
     pub id: Option<i64>,
     #[serde(default)]
-    pub group_id: Option<i64>,
-    #[serde(default)]
-    pub collapsed_group_ids: Vec<i64>,
+    pub collapsed_tag_ids: Vec<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -246,8 +253,7 @@ impl Default for TagState {
     fn default() -> Self {
         Self {
             id: None,
-            group_id: None,
-            collapsed_group_ids: Vec::new(),
+            collapsed_tag_ids: Vec::new(),
         }
     }
 }
@@ -358,6 +364,8 @@ pub struct LibraryState {
     #[serde(default)]
     pub smart_albums: Vec<CustomSmartAlbumState>,
     #[serde(default)]
+    pub dedup_preferred_folder_ids: Vec<i64>,
+    #[serde(default)]
     pub rating: RatingState,
     #[serde(default)]
     pub culling: CullingState,
@@ -400,6 +408,8 @@ pub struct AppConfig {
     pub last_selected_item_index: i64,
     #[serde(default)]
     pub db_storage_dir: Option<String>,
+    #[serde(default)]
+    pub thumbnail_cache_dir: Option<String>,
     pub current_library_id: String,
     pub libraries: Vec<Library>,
 }
@@ -415,6 +425,7 @@ impl Default for AppConfig {
             debug: false,
             last_selected_item_index: default_last_selected_item_index(),
             db_storage_dir: None,
+            thumbnail_cache_dir: None,
             current_library_id: "default".to_string(),
             libraries: vec![Library {
                 id: "default".to_string(),
@@ -481,7 +492,9 @@ pub fn load_app_config() -> Result<AppConfig, String> {
     let _guard = config_io_lock()
         .lock()
         .map_err(|_| "Config lock poisoned".to_string())?;
-    load_app_config_locked()
+    let config = load_app_config_locked()?;
+    *CURRENT_LIBRARY_ID.write().map_err(|e| e.to_string())? = Some(config.current_library_id.clone());
+    Ok(config)
 }
 
 fn load_app_config_locked() -> Result<AppConfig, String> {
@@ -542,12 +555,38 @@ fn load_app_config_locked() -> Result<AppConfig, String> {
     }
 }
 
-/// Save app config to file
-pub fn save_app_config(config: &AppConfig) -> Result<(), String> {
-    let _guard = config_io_lock()
+/// Serialize the whole read/modify/write, not just the individual file accesses.
+pub(crate) fn update_app_config<T>(
+    update: impl FnOnce(&mut AppConfig) -> Result<T, String>,
+) -> Result<T, String> {
+    update_config_with(
+        config_io_lock(),
+        load_app_config_locked,
+        save_app_config_locked,
+        update,
+    )
+}
+
+fn update_config_with<T>(
+    lock: &Mutex<()>,
+    load: impl FnOnce() -> Result<AppConfig, String>,
+    save: impl FnOnce(&AppConfig) -> Result<(), String>,
+    update: impl FnOnce(&mut AppConfig) -> Result<T, String>,
+) -> Result<T, String> {
+    let _guard = lock
         .lock()
         .map_err(|_| "Config lock poisoned".to_string())?;
-    save_app_config_locked(config)
+    let mut config = load()?;
+    let result = update(&mut config)?;
+    save(&config)?;
+    Ok(result)
+}
+
+pub(crate) fn set_thumbnail_cache_dir(directory: Option<String>) -> Result<(), String> {
+    update_app_config(|config| {
+        config.thumbnail_cache_dir = directory;
+        Ok(())
+    })
 }
 
 fn save_app_config_locked(config: &AppConfig) -> Result<(), String> {
@@ -556,6 +595,7 @@ fn save_app_config_locked(config: &AppConfig) -> Result<(), String> {
         .map_err(|e| format!("Failed to serialize config: {}", e))?;
     write_atomic(&config_path, &content)
         .map_err(|e| format!("Failed to write config file: {}", e))?;
+    *CURRENT_LIBRARY_ID.write().map_err(|e| e.to_string())? = Some(config.current_library_id.clone());
     Ok(())
 }
 
@@ -708,6 +748,7 @@ fn recover_app_config_from_library_dbs() -> Result<AppConfig, String> {
         debug: false,
         last_selected_item_index: default_last_selected_item_index(),
         db_storage_dir: None,
+        thumbnail_cache_dir: None,
         current_library_id,
         libraries,
     })
@@ -715,78 +756,76 @@ fn recover_app_config_from_library_dbs() -> Result<AppConfig, String> {
 
 /// Add a new library
 pub fn add_library(name: &str) -> Result<Library, String> {
-    let mut config = load_app_config()?;
+    update_app_config(|config| {
+        // Check for duplicate names
+        if config.libraries.iter().any(|l| l.name == name) {
+            return Err("Library name already exists".to_string());
+        }
 
-    // Check for duplicate names
-    if config.libraries.iter().any(|l| l.name == name) {
-        return Err("Library name already exists".to_string());
-    }
+        // Generate unique ID
+        let id = Uuid::new_v4().to_string();
+        let now = chrono::Utc::now().timestamp();
 
-    // Generate unique ID
-    let id = Uuid::new_v4().to_string();
-    let now = chrono::Utc::now().timestamp();
+        let library = Library {
+            id: id.clone(),
+            name: name.to_string(),
+            created_at: now,
 
-    let library = Library {
-        id: id.clone(),
-        name: name.to_string(),
-        created_at: now,
+            state: LibraryState::default(),
+            hidden: false,
+        };
 
-        state: LibraryState::default(),
-        hidden: false,
-    };
+        config.libraries.push(library.clone());
 
-    config.libraries.push(library.clone());
-    save_app_config(&config)?;
-
-    Ok(library)
+        Ok(library)
+    })
 }
 
 /// Edit library name
 pub fn edit_library(id: &str, new_name: &str) -> Result<(), String> {
-    let mut config = load_app_config()?;
+    update_app_config(|config| {
+        // Check for duplicate names (excluding current library)
+        if config
+            .libraries
+            .iter()
+            .any(|l| l.name == new_name && l.id != id)
+        {
+            return Err("Library name already exists".to_string());
+        }
 
-    // Check for duplicate names (excluding current library)
-    if config
-        .libraries
-        .iter()
-        .any(|l| l.name == new_name && l.id != id)
-    {
-        return Err("Library name already exists".to_string());
-    }
-
-    // Find and update the library
-    if let Some(lib) = config.libraries.iter_mut().find(|l| l.id == id) {
-        lib.name = new_name.to_string();
-        save_app_config(&config)?;
-        Ok(())
-    } else {
-        Err("Library not found".to_string())
-    }
+        // Find and update the library
+        if let Some(lib) = config.libraries.iter_mut().find(|l| l.id == id) {
+            lib.name = new_name.to_string();
+            Ok(())
+        } else {
+            Err("Library not found".to_string())
+        }
+    })
 }
 
 /// Remove a library (also deletes the database file)
 pub fn remove_library(id: &str) -> Result<(), String> {
-    let mut config = load_app_config()?;
+    update_app_config(|config| {
+        // Cannot remove the only remaining library
+        if config.libraries.len() <= 1 {
+            return Err("Cannot remove the last library".to_string());
+        }
 
-    // Cannot remove the only remaining library
-    if config.libraries.len() <= 1 {
-        return Err("Cannot remove the last library".to_string());
-    }
+        // Find and remove the library
+        let original_len = config.libraries.len();
+        config.libraries.retain(|l| l.id != id);
 
-    // Find and remove the library
-    let original_len = config.libraries.len();
-    config.libraries.retain(|l| l.id != id);
+        if config.libraries.len() == original_len {
+            return Err("Library not found".to_string());
+        }
 
-    if config.libraries.len() == original_len {
-        return Err("Library not found".to_string());
-    }
+        // If removing current library, switch to first available
+        if config.current_library_id == id {
+            config.current_library_id = config.libraries[0].id.clone();
+        }
 
-    // If removing current library, switch to first available
-    if config.current_library_id == id {
-        config.current_library_id = config.libraries[0].id.clone();
-    }
-
-    save_app_config(&config)?;
+        Ok(())
+    })?;
 
     // Delete the database file and SQLite WAL/SHM companion files
     let db_path = t_storage::get_library_db_path(id)?;
@@ -801,9 +840,8 @@ pub fn remove_library(id: &str) -> Result<(), String> {
         }
     }
 
-    let thumb_cache_dir = get_app_cache_dir()?.join(id);
-    if thumb_cache_dir.exists() {
-        let _ = fs::remove_dir_all(&thumb_cache_dir);
+    for warning in crate::t_cache_storage::remove_library_cache(id) {
+        eprintln!("Library {id} cache cleanup failed: {warning}");
     }
 
     Ok(())
@@ -811,17 +849,16 @@ pub fn remove_library(id: &str) -> Result<(), String> {
 
 /// Switch to a different library
 pub fn switch_library(id: &str) -> Result<(), String> {
-    let mut config = load_app_config()?;
+    update_app_config(|config| {
+        // Verify library exists
+        if !config.libraries.iter().any(|l| l.id == id) {
+            return Err("Library not found".to_string());
+        }
 
-    // Verify library exists
-    if !config.libraries.iter().any(|l| l.id == id) {
-        return Err("Library not found".to_string());
-    }
+        config.current_library_id = id.to_string();
 
-    config.current_library_id = id.to_string();
-    save_app_config(&config)?;
-
-    Ok(())
+        Ok(())
+    })
 }
 
 /// Get library info
@@ -836,6 +873,7 @@ pub struct LibraryInfo {
 }
 
 pub fn get_library_info(id: &str) -> Result<LibraryInfo, String> {
+    let _lease = t_storage::DbConnectionLease::acquire()?;
     let db_path = t_storage::get_library_db_path(id)?;
 
     // Get db file size
@@ -857,6 +895,9 @@ pub fn get_library_info(id: &str) -> Result<LibraryInfo, String> {
         )
         .unwrap_or((0, 0));
 
+    drop(conn);
+    drop(_lease);
+
     // Sum thumbnail cache size (jpg/png files under cache_dir/{id}/).
     // Best-effort: any IO error just contributes 0 rather than failing the call.
     let thumb_cache_size = get_thumb_cache_size(id);
@@ -871,7 +912,8 @@ pub fn get_library_info(id: &str) -> Result<LibraryInfo, String> {
 }
 
 fn get_thumb_cache_size(library_id: &str) -> i64 {
-    let Ok(cache_root) = get_app_cache_dir().map(|p| p.join(library_id)) else {
+    let Ok(_cache_access) = crate::t_cache_storage::access() else { return 0; };
+    let Ok(cache_root) = crate::t_cache_storage::root().map(|p| p.join(library_id)) else {
         return 0;
     };
     if !cache_root.is_dir() {
@@ -898,15 +940,14 @@ fn get_thumb_cache_size(library_id: &str) -> i64 {
 
 /// Save library state
 pub fn save_library_state(id: &str, state: LibraryState) -> Result<(), String> {
-    let mut config = load_app_config()?;
-
-    if let Some(lib) = config.libraries.iter_mut().find(|l| l.id == id) {
-        lib.state = state;
-        save_app_config(&config)?;
-        Ok(())
-    } else {
-        Err("Library not found".to_string())
-    }
+    update_app_config(|config| {
+        if let Some(lib) = config.libraries.iter_mut().find(|l| l.id == id) {
+            lib.state = state;
+            Ok(())
+        } else {
+            Err("Library not found".to_string())
+        }
+    })
 }
 
 /// Get library state
@@ -933,49 +974,160 @@ pub fn get_current_library_state() -> Result<LibraryState, String> {
 
 /// Hide/Show a library
 pub fn hide_library(id: &str, hidden: bool) -> Result<(), String> {
-    let mut config = load_app_config()?;
+    update_app_config(|config| {
+        // Cannot hide the current library
+        // if config.current_library_id == id && hidden {
+        //     return Err("Cannot hide the current library".to_string());
+        // }
 
-    // Cannot hide the current library
-    // if config.current_library_id == id && hidden {
-    //     return Err("Cannot hide the current library".to_string());
-    // }
-
-    if let Some(lib) = config.libraries.iter_mut().find(|l| l.id == id) {
-        lib.hidden = hidden;
-        save_app_config(&config)?;
-        Ok(())
-    } else {
-        Err("Library not found".to_string())
-    }
+        if let Some(lib) = config.libraries.iter_mut().find(|l| l.id == id) {
+            lib.hidden = hidden;
+            Ok(())
+        } else {
+            Err("Library not found".to_string())
+        }
+    })
 }
 
 /// Reorder libraries
 pub fn reorder_libraries(ids: Vec<String>) -> Result<(), String> {
-    let mut config = load_app_config()?;
+    update_app_config(|config| {
+        // Create a map for quick lookup
+        let mut lib_map: std::collections::HashMap<String, Library> = config
+            .libraries
+            .drain(..)
+            .map(|l| (l.id.clone(), l))
+            .collect();
 
-    // Create a map for quick lookup
-    let mut lib_map: std::collections::HashMap<String, Library> = config
-        .libraries
-        .drain(..)
-        .map(|l| (l.id.clone(), l))
-        .collect();
+        let mut new_libraries = Vec::new();
 
-    let mut new_libraries = Vec::new();
+        // Rebuild the list based on the new order
+        for id in ids {
+            if let Some(lib) = lib_map.remove(&id) {
+                new_libraries.push(lib);
+            }
+        }
 
-    // Rebuild the list based on the new order
-    for id in ids {
-        if let Some(lib) = lib_map.remove(&id) {
+        // Append any remaining libraries (shouldn't happen if frontend is correct, but safe fallback)
+        for (_, lib) in lib_map {
             new_libraries.push(lib);
         }
+
+        config.libraries = new_libraries;
+
+        Ok(())
+    })
+}
+
+#[cfg(test)]
+mod config_update_tests {
+    use super::*;
+
+    #[test]
+    fn tag_state_preserves_tree_folding_and_accepts_legacy_groups() {
+        let legacy: TagState = serde_json::from_value(serde_json::json!({
+            "id": 10, "groupId": 2, "collapsedGroupIds": [2]
+        }))
+        .unwrap();
+        assert_eq!(legacy.id, Some(10));
+        assert!(legacy.collapsed_tag_ids.is_empty());
+        let state = TagState {
+            id: Some(10),
+            collapsed_tag_ids: vec![10, 20],
+        };
+        let saved = serde_json::to_value(&state).unwrap();
+        assert_eq!(
+            saved,
+            serde_json::json!({"id": 10, "collapsedTagIds": [10, 20]})
+        );
+        let restored: TagState = serde_json::from_value(saved).unwrap();
+        assert_eq!(restored.collapsed_tag_ids, state.collapsed_tag_ids);
+        assert!(TagState::default().collapsed_tag_ids.is_empty());
+    }
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc, Arc,
+    };
+
+    #[test]
+    fn concurrent_updates_read_after_the_previous_commit() {
+        let lock = Arc::new(Mutex::new(()));
+        let stored = Arc::new(Mutex::new(AppConfig::default()));
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let writer_lock = lock.clone();
+        let writer_stored = stored.clone();
+        let writer = std::thread::spawn(move || {
+            update_config_with(
+                &writer_lock,
+                || Ok(writer_stored.lock().unwrap().clone()),
+                |config| {
+                    *writer_stored.lock().unwrap() = config.clone();
+                    Ok(())
+                },
+                |config| {
+                    config.thumbnail_cache_dir = Some("/new-cache".into());
+                    started_tx.send(()).unwrap();
+                    release_rx.recv().unwrap();
+                    Ok(())
+                },
+            )
+        });
+        started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let read_started = Arc::new(AtomicBool::new(false));
+        let reader_started = read_started.clone();
+        let reader_lock = lock.clone();
+        let reader_stored = stored.clone();
+        let (attempt_tx, attempt_rx) = mpsc::channel();
+        let reader = std::thread::spawn(move || {
+            attempt_tx.send(()).unwrap();
+            update_config_with(
+                &reader_lock,
+                || {
+                    reader_started.store(true, Ordering::SeqCst);
+                    Ok(reader_stored.lock().unwrap().clone())
+                },
+                |config| {
+                    *reader_stored.lock().unwrap() = config.clone();
+                    Ok(())
+                },
+                |config| {
+                    config.last_selected_item_index = 42;
+                    Ok(())
+                },
+            )
+        });
+        attempt_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(!read_started.load(Ordering::SeqCst));
+        release_tx.send(()).unwrap();
+        writer.join().unwrap().unwrap();
+        reader.join().unwrap().unwrap();
+        let final_config = stored.lock().unwrap();
+        assert_eq!(
+            final_config.thumbnail_cache_dir.as_deref(),
+            Some("/new-cache")
+        );
+        assert_eq!(final_config.last_selected_item_index, 42);
+        assert_eq!(final_config.libraries.len(), 1);
     }
 
-    // Append any remaining libraries (shouldn't happen if frontend is correct, but safe fallback)
-    for (_, lib) in lib_map {
-        new_libraries.push(lib);
+    #[test]
+    fn rejected_update_never_saves_partial_changes() {
+        let lock = Mutex::new(());
+        let saved = AtomicBool::new(false);
+        let result = update_config_with(
+            &lock,
+            || Ok(AppConfig::default()),
+            |_| {
+                saved.store(true, Ordering::SeqCst);
+                Ok(())
+            },
+            |config| {
+                config.thumbnail_cache_dir = Some("/new-cache".into());
+                Err::<(), _>("rejected".into())
+            },
+        );
+        assert!(result.is_err());
+        assert!(!saved.load(Ordering::SeqCst));
     }
-
-    config.libraries = new_libraries;
-    save_app_config(&config)?;
-
-    Ok(())
 }

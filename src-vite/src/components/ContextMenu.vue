@@ -39,11 +39,12 @@
                   'w-full px-2 py-1 flex justify-between text-sm whitespace-nowrap',
                   item.disabled ? 'text-base-content/30' : 'hover:bg-base-100/30 hover:text-base-content hover:rounded-box cursor-pointer group',
                 ]"
+                :aria-disabled="!!item.disabled"
                 @click="handleMainItemClick(index, item, $event)"
               >
                 <div class="w-full flex items-center">
                   <div class="w-5">
-                    <component v-if="item.icon" class="t-icon-size-sm" :is="item.icon" />
+                    <component v-if="item.icon" :class="item.iconClass || 't-icon-size-sm'" :is="item.icon" />
                     <span
                       v-else-if="item.swatch"
                       :class="[
@@ -54,8 +55,9 @@
                     />
                   </div>
                   <span class="ml-2 mr-4">{{ item.label }}</span>
-                  <span class="ml-auto text-base-content/30">{{ item.shortcut }}</span>
-                  <IconRight v-if="item.children?.length" class="ml-2 w-3 h-3 text-base-content/70 group-hover:text-base-content"/>
+                  <span v-if="item.count != null" class="ml-auto sidebar-item-count">{{ item.count }}</span>
+                  <span v-else-if="item.shortcut && !item.children?.length" class="ml-auto text-base-content/30">{{ item.shortcut }}</span>
+                  <IconRight v-if="item.children?.length" class="ml-auto size-3 shrink-0" aria-hidden="true"/>
                 </div>
               </button>
             </div>
@@ -88,6 +90,7 @@
                   'w-full px-2 py-1 flex justify-between text-sm whitespace-nowrap',
                   child.disabled ? 'text-base-content/30' : 'hover:bg-base-100/30 hover:text-base-content hover:rounded-box cursor-pointer',
                 ]"
+                :aria-disabled="!!child.disabled"
                 @click="handleLeafClick(child)"
               >
                 <div class="w-full flex items-center">
@@ -95,7 +98,7 @@
                     <component class="t-icon-size-sm" :is="child.icon" ></component>
                   </div>
                   <span class="ml-2 mr-4">{{ child.label }}</span>
-                  <span class="ml-auto text-base-content/30">{{ child.shortcut }}</span>
+                  <span v-if="child.shortcut" class="ml-auto text-base-content/30">{{ child.shortcut }}</span>
                 </div>
               </button>
             </div>

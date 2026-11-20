@@ -1,21 +1,21 @@
+import { isOriginalStorageUnavailable, isOriginalUnavailable, requiresOriginalAction, requiresLocalContent } from '@/common/availability';
 import { computed, markRaw, Ref } from 'vue';
 import { config, libConfig } from '@/common/config';
 import { SIDEBAR } from '@/common/constants';
 import { DEFAULT_PLATFORM, getShortcutLabel, ShortcutActionId } from '@/common/shortcuts';
 import {
   IconMonitor,
+  IconSave,
   IconPrint,
   IconRefresh,
   IconHeart,
   IconStar,
   IconStarFilled,
   IconTag,
-  IconRotate,
   IconCopy,
   IconRename,
   IconFileArrowRight,
   IconTrash,
-  IconComment,
   IconPhotoSearch,
   IconPersonSearch,
   IconImageEdit,
@@ -24,10 +24,13 @@ import {
   IconFlag,
   IconFlagFilled,
   IconFlagOff,
-  IconBookmark,
+  IconCollection,
   IconSplitOn,
   IconSplitOn4,
+  IconCollage,
 } from '@/common/icons';
+
+import { isPreviewOnlyDocument } from '@/common/utils';
 
 const OPEN_IN_APP_LABELS = {
   generic: ['open_in_app', 'Open in external app...'],
@@ -45,9 +48,30 @@ export const useFileMenuItems = (
     selectMode?: Ref<boolean>;
     selectionMediaKind?: Ref<'image' | 'video' | 'mixed' | 'empty'>;
     selectionCount?: Ref<number>;
+    selectionHasUnavailable?: Ref<boolean>;
+    selectionHasCloudOnly?: Ref<boolean>;
+    selectionStorageUnavailable?: Ref<boolean>;
+    selectionInCollection?: Ref<boolean>;
+    selectionFirstFavorite?: Ref<boolean>;
   }
 ) => {
-  const createAction = (actionName: string) => () => onAction(actionName);
+  const requiresAvailableFile = (action: string) => action === 'copy' || requiresOriginalAction(action) || requiresLocalContent(action);
+  const actionUnavailable = (action: string, target: any) => {
+    const cloudOnly = options?.selectMode?.value ? options.selectionHasCloudOnly?.value : target?.cloud_only;
+    if (cloudOnly && requiresLocalContent(action)) return true;
+    if (options?.selectMode?.value) {
+      return action === 'copy'
+        ? (options.selectionStorageUnavailable?.value ?? options.selectionHasUnavailable?.value)
+        : requiresOriginalAction(action) && options.selectionHasUnavailable?.value;
+    }
+    return action === 'copy'
+      ? isOriginalStorageUnavailable(target)
+      : requiresOriginalAction(action) && isOriginalUnavailable(target);
+  };
+  const createAction = (actionName: string) => Object.assign(() => {
+    if (requiresAvailableFile(actionName) && actionUnavailable(actionName, file.value)) return;
+    onAction(actionName);
+  }, { actionName });
   const shortcut = (actionId: ShortcutActionId) => getShortcutLabel(actionId, DEFAULT_PLATFORM);
 
   // Resolves a label string against the current locale, or returns the fallback if none was found.
@@ -80,22 +104,82 @@ export const useFileMenuItems = (
     const kind = options?.selectionMediaKind?.value ?? 'empty';
     const externalAppKind = kind === 'image' || kind === 'video' ? kind : undefined;
     const selectionCount = options?.selectionCount?.value ?? 0;
+    const unavailable = options?.selectionHasUnavailable?.value === true;
+    const batchActions = new Set([
+      'tag', 'add-to-collection', 'rename', 'copy', 'trash',
+    ]);
+    const batchLabels = new Set([
+      localeMsg.value.rating.title,
+      localeMsg.value.culling.title,
+      translate('menu.file.move_copy'),
+    ]);
+    const batchItems = buildSingleFileMenu({}).filter(item =>
+      batchActions.has(item.action?.actionName) || batchLabels.has(item.label)
+    ).map(item => ({
+      ...item,
+      disabled: selectionCount === 0
+        || (requiresAvailableFile(item.action?.actionName || '') && actionUnavailable(item.action.actionName, null))
+        || (unavailable && item.label === translate('menu.file.move_copy')),
+      hideInSelectionPanel: true,
+    }));
+
     return [
       {
-        label: String(localeMsg.value.menu.file.compare_selected_images || 'Compare selected images'),
+        label: String(localeMsg.value.menu.file.compare_selected_images || 'Compare selected images...'),
         icon: markRaw(selectionCount >= 3 ? IconSplitOn4 : IconSplitOn),
-        disabled: kind !== 'image' || selectionCount < 2,
+        disabled: kind !== 'image' || selectionCount < 2 || options?.selectionHasCloudOnly?.value,
         action: createAction('compare-selected-images'),
       },
       // A mixed image+video selection has no single external-app target, so
       // disable the entry rather than showing an empty app list.
-      { ...externalAppMenu(externalAppKind), disabled: kind === 'mixed' },
+      { ...externalAppMenu(externalAppKind), disabled: unavailable || options?.selectionHasCloudOnly?.value || kind === 'mixed' },
+      {
+        label: String(localeMsg.value.menu.file.create_montage || 'Create montage...'),
+        icon: markRaw(IconCollage),
+        disabled: unavailable || options?.selectionHasCloudOnly?.value || selectionCount < 2,
+        action: createAction('create-montage'),
+      },
+      { label: '-', action: null },
+      {
+        label: options?.selectionFirstFavorite?.value
+          ? localeMsg.value.menu.meta.unfavorite
+          : localeMsg.value.menu.meta.favorite,
+        icon: markRaw(options?.selectionFirstFavorite?.value ? IconHeartFilled : IconHeart),
+        shortcut: shortcut('meta.favorite'),
+        disabled: selectionCount === 0,
+        action: createAction(options?.selectionFirstFavorite?.value ? 'unfavorite-all' : 'favorite-all'),
+        hideInSelectionPanel: true,
+      },
+      ...batchItems.filter(item =>
+        !['rename', 'copy', 'trash'].includes(item.action?.actionName)
+        && item.label !== translate('menu.file.move_copy')
+      ),
+      { label: '-', action: null },
+      ...batchItems.filter(item => item.action?.actionName === 'rename'),
+      ...batchItems.filter(item => item.action?.actionName === 'copy'),
+      ...batchItems.filter(item => item.label === translate('menu.file.move_copy')),
+      {
+        label: localeMsg.value.menu.file.remove_from_collection,
+        hidden: !options?.selectionInCollection?.value,
+        disabled: selectionCount === 0,
+        action: createAction('remove-selected-from-collection'),
+        hideInSelectionPanel: true,
+      },
+      { label: '-', action: null },
       {
         label: localeMsg.value.menu.file.refresh_file_info,
         icon: markRaw(IconRefresh),
-        disabled: selectionCount === 0,
+        disabled: unavailable || selectionCount === 0,
         action: createAction('refresh-file-info'),
       },
+      {
+        label: String(localeMsg.value.menu.file.save_xmp || 'Save Metadata to XMP'),
+        icon: markRaw(IconSave),
+        disabled: unavailable || options?.selectionHasCloudOnly?.value || selectionCount === 0,
+        action: createAction('save-xmp'),
+      },
+      { label: '-', action: null },
+      ...batchItems.filter(item => item.action?.actionName === 'trash'),
     ];
   };
 
@@ -112,7 +196,8 @@ export const useFileMenuItems = (
       && albumId > 0;
     const canSetDesktopWallpaper = f.file_type === 1
       || (f.file_type === 3 && f.media_subtype === 'raw_jpeg_pair' && f.live_photo_video_path);
-    return [
+    const unavailable = isOriginalUnavailable(f);
+    const items: any[] = [
       {
         label: localeMsg.value.menu.file.view_in_new_window,
         icon: markRaw(IconMonitor),
@@ -124,7 +209,7 @@ export const useFileMenuItems = (
         label: localeMsg.value.menu.file.edit_image,
         icon: markRaw(IconImageEdit),
         shortcut: shortcut('file.editImage'),
-        disabled: !isImage,
+        disabled: !isImage || isPreviewOnlyDocument(f.file_path || ''),
         action: createAction('edit')
       },
       {
@@ -223,21 +308,9 @@ export const useFileMenuItems = (
       },
       {
         label: localeMsg.value.menu.meta.collection,
-        icon: markRaw(IconBookmark),
+        icon: markRaw(IconCollection),
         shortcut: shortcut('meta.collection'),
         action: createAction('add-to-collection'),
-      },
-      {
-        label: localeMsg.value.menu.meta.comment,
-        icon: markRaw(IconComment),
-        shortcut: shortcut('meta.comment'),
-        action: createAction('comment')
-      },
-      {
-        label: localeMsg.value.menu.meta.rotate,
-        icon: markRaw(IconRotate),
-        shortcut: shortcut('meta.rotate'),
-        action: createAction('rotate')
       },
       { label: "-", action: null },
       {
@@ -264,7 +337,6 @@ export const useFileMenuItems = (
           },
           {
             label: translate('menu.file.move_to_folder'),
-            shortcut: shortcut('file.moveToFolder'),
             action: createAction('move-to-folder')
           },
           {
@@ -300,6 +372,11 @@ export const useFileMenuItems = (
         action: createAction('refresh-file-info')
       },
       {
+        label: String(localeMsg.value.menu.file.save_xmp || 'Save Metadata to XMP'),
+        icon: markRaw(IconSave),
+        action: createAction('save-xmp'),
+      },
+      {
         label: localeMsg.value.menu.file.set_as,
         hidden: !canSetAlbumCover && !canSetDesktopWallpaper,
         children: [
@@ -317,12 +394,27 @@ export const useFileMenuItems = (
       },
       { label: "-", action: null },
       {
-        label: localeMsg.value.menu.file.delete,
+        label: translate(config.settings.fileDeleteBehavior === 'permanent' ? 'menu.file.delete' : 'msgbox.move_to_trash.title'),
         icon: markRaw(IconTrash),
-        shortcut: shortcut('file.trash'),
+        shortcut: shortcut(config.settings.fileDeleteBehavior === 'permanent' ? 'file.deletePermanently' : 'file.trash'),
         action: createAction('trash')
       },
     ];
+    const applyAvailability = (item: any): any => {
+      const action = item.action?.actionName || '';
+      const requiresAvailableGroup = item.label === menuLabel(OPEN_IN_APP_LABELS.generic)
+        || item.label === translate('menu.file.move_copy');
+      return {
+        ...item,
+        disabled: !!item.disabled
+          || (requiresAvailableFile(action) && actionUnavailable(action, f))
+          || (unavailable && requiresAvailableGroup)
+          || (item.label === menuLabel(OPEN_IN_APP_LABELS.generic)
+            && (options?.selectMode?.value ? options.selectionHasCloudOnly?.value : f.cloud_only)),
+        children: item.children?.map(applyAvailability),
+      };
+    };
+    return items.map(applyAvailability);
   };
 
   return computed(() => {

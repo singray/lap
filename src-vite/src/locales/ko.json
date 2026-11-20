@@ -37,14 +37,14 @@
     "drop_action": "추가",
     "drop_title_hint": "추가하려면 드롭",
     "empty_drop_hint": "항목을 컬렉션으로 드래그하여 추가하세요.",
-    "added_toast": "{count}개 파일을 컬렉션에 추가했습니다",
-    "add_failed_toast": "{count}개 컬렉션에 파일을 추가할 수 없습니다",
-    "already_exists_toast": "{count}개 파일이 이미 컬렉션에 있습니다",
+    "added_toast": "{count}개 항목을 컬렉션에 추가했습니다",
+    "add_failed_toast": "{count}개 컬렉션에 항목을 추가할 수 없습니다",
+    "already_exists_toast": "{count}개 항목이 이미 컬렉션에 있습니다",
     "clear": "컬렉션 비우기",
     "clear_confirm_title": "컬렉션 비우기",
     "clear_confirm_message": "\"{name}\"에서 모든 파일을 제거하시겠습니까? 파일 자체는 삭제되지 않습니다.",
     "clear_confirm_ok": "비우기",
-    "removed_toast": "{count}개 파일을 컬렉션에서 제거했습니다"
+    "removed_toast": "{count}개 항목을 컬렉션에서 제거했습니다"
   },
   "library": {
     "all_files": "모든 파일",
@@ -54,6 +54,12 @@
     "database_corrupted_hint": "다른 라이브러리로 전환해 보세요."
   },
   "album": {
+    "drop": {
+      "add": "폴더를 드래그하여 추가",
+      "separate": "파일과 폴더를 따로 드래그하세요.",
+      "confirm_folder": "폴더 선택: {name}",
+      "folders_only": "폴더를 드래그하세요."
+    },
     "album_list": "앨범",
     "search_folders": "폴더 검색",
     "favorite_folders_only": "즐겨찾는 폴더만",
@@ -78,14 +84,15 @@
       "name": "이름",
       "description": "설명",
       "description_placeholder": "앨범 설명 입력",
-      "images": "사진",
+      "images": "이미지",
       "videos": "비디오",
       "section_general": "일반",
       "section_scan": "스캔 상태",
       "scanned_files": "스캔됨",
       "indexed_files": "인덱싱됨",
       "skipped_files": "건너뜀",
-      "merged_files": "병합됨",
+      "merged_files": "페어 파일",
+      "merged_files_hint": "주 사진과 함께 표시되는 RAW 쌍 및 Live Photo의 동반 파일입니다.",
       "failed_files": "실패",
       "files_to_scan": "스캔 대기",
       "scanning": "스캔 중",
@@ -102,7 +109,6 @@
       "last_scan_time": "최근 스캔",
       "tab_general": "일반",
       "file_types": "파일 형식 제외",
-      "photos": "사진",
       "raw": "RAW",
       "file_types_required": "파일 형식을 하나 이상 포함해야 합니다.",
       "pixel_filter": "작은 이미지 제외",
@@ -141,6 +147,9 @@
       "add_rule": "규칙 추가",
       "rules_count": "{count}/{max} 규칙",
       "remove_rule": "규칙 제거",
+      "search_options": "필터…",
+      "no_matches": "일치 항목 없음",
+      "select_value": "선택…",
       "group": "그룹",
       "sort": "정렬",
       "order": "순서",
@@ -149,6 +158,7 @@
       "validation_name": "스마트 앨범 이름을 입력하세요.",
       "validation_rule": "완성된 규칙을 하나 이상 추가하세요.",
       "fields": {
+        "folder_name": "폴더 이름",
         "name": "파일 이름",
         "file_type": "파일 유형",
         "media_subtype": "미디어 하위 유형",
@@ -223,11 +233,29 @@
       }
     }
   },
+  "offline": {
+    "badge": "오프라인",
+    "download_to_open": "이 사진을 열려면 먼저 클라우드 저장소 앱에서 다운로드하세요.",
+    "cloud_only": "온라인에서만 사용 가능",
+    "cloud_only_pending": "온라인에서만 사용 가능 — 파일 정보 미완성",
+    "original_unavailable": "원본 파일에 접근할 수 없습니다",
+    "requires_original": "원본 파일이 필요합니다. 저장 장치를 다시 연결하세요."
+  },
+  "import_files": {
+    "title": "파일 가져오기",
+    "media": "지원되는 미디어 파일",
+    "progress": "파일 {processed} / {total}개 가져오는 중…",
+    "summary": "가져옴: {imported}개 · 실패: {failed}개",
+    "formats_failed": "지원되는 파일 형식을 불러올 수 없습니다.",
+    "destination_unavailable": "대상 폴더를 사용할 수 없습니다.",
+    "copy_failed": "이 파일을 가져올 수 없습니다."
+  },
   "import_organize": {
+    "title": "폴더 가져오기",
     "section_folders": "폴더 선택",
     "section_status": "가져오기 상태",
     "to_import": "가져올 파일",
-    "files_progress": "{processed} / {total}개 파일 ({size})",
+    "files_progress": "{processed} / {total}개 항목 ({size})",
     "source": "원본",
     "source_placeholder": "원본 폴더 선택",
     "destination": "대상",
@@ -235,10 +263,10 @@
     "layout_day": "일별 — YYYY/YYYY-MM-DD",
     "layout_month": "월별 — YYYY/YYYY-MM",
     "layout_year": "연도별 — YYYY",
-    "layout_none": "단일 폴더",
+    "layout_structure": "폴더 구조 유지",
     "import": "가져오기",
     "preparing": "가져오기 준비 중",
-    "importing": "파일 가져오는 중",
+    "importing": "항목 가져오는 중",
     "complete": "가져오기 완료",
     "cancelled": "가져오기가 취소됨",
     "continue": "계속",
@@ -261,7 +289,7 @@
   "search": {
     "title": "검색",
     "similar_images": "관련 사진",
-    "image_search_placeholder": "이미지, 파일 이름 또는 메모 검색",
+    "image_search_placeholder": "라이브러리 검색",
     "matches": "일치 항목",
     "unknown_location": "알 수 없는 위치",
     "unknown_camera": "알 수 없는 카메라",
@@ -311,11 +339,11 @@
     "folders": "즐겨찾는 폴더"
   },
   "rating": {
+    "mixed": "혼합",
     "title": "평점",
     "unrated": "별점 없음",
     "all_rated": "모든 평점 있음",
     "rated": "평점 있음",
-    "mixed": "여러 값",
     "clear_rating": "별점 지우기",
     "five_stars": "5점",
     "four_stars": "4점",
@@ -330,6 +358,8 @@
     "unreviewed": "미선별"
   },
   "tag": {
+    "no_selected_tags": "선택한 태그가 없습니다",
+    "show_selected_only": "선택한 태그만 표시",
     "title": "태그",
     "delete_tag": "태그 삭제",
     "edit_tag": "태그 편집",
@@ -338,7 +368,14 @@
     "not_found": "태그를 찾을 수 없음",
     "name_exists": "같은 이름의 태그가 이미 있습니다",
     "name_save_failed": "태그 이름을 저장할 수 없습니다",
-    "load_failed": "태그 상태를 불러오지 못했습니다. 대화 상자를 닫고 다시 시도하세요."
+    "move_failed": "태그를 이동할 수 없습니다",
+    "delete_failed": "태그를 삭제할 수 없습니다",
+    "load_failed": "태그 상태를 불러오지 못했습니다. 대화 상자를 닫고 다시 시도하세요.",
+    "root": "최상위",
+    "add_child": "하위 태그 만들기",
+    "invalid_name": "태그 이름에 , ; {'|'} 문자를 사용할 수 없습니다.",
+    "invalid_move": "태그를 자신이나 하위 태그로 이동할 수 없습니다.",
+    "delete_tree": "이 태그와 하위 태그가 삭제됩니다. 이미지는 유지됩니다."
   },
   "subject": {
     "title": "주제",
@@ -420,7 +457,9 @@
       "placeholder": "파일 이름"
     },
     "filter": {
-      "select_mode": "선택 항목",
+      "favorites_only": "즐겨찾기만",
+      "show_selection_panel": "선택 패널 열기",
+      "exit_selection_mode": "선택 모드 종료",
       "select_count": "{count}개 선택됨",
       "group_type_options": [
         "없음",
@@ -443,7 +482,8 @@
         "크기",
         "픽셀 크기",
         "재생시간",
-        "무작위"
+        "무작위",
+        "추가"
       ],
       "similarity": "유사도",
       "sort_order_options": [
@@ -452,8 +492,8 @@
       ],
       "file_type_options": [
         "모두",
-        "사진",
-        "RAW 파일",
+        "이미지",
+        "RAW만",
         "동영상"
       ],
       "file_type_other": "기타"
@@ -461,9 +501,7 @@
     "tooltip": {
       "restore": "복원",
       "refresh": "새로고침",
-      "show_info": "정보 보기",
-      "hide_info": "정보 숨기기",
-      "open_dedup": "중복 및 유사 사진 찾기",
+      "info": "정보",
       "clear_history": "기록 지우기",
       "index_faces": "얼굴 인덱싱",
       "sort": "정렬",
@@ -483,14 +521,13 @@
       "조정"
     ],
     "empty_title": "현재 목록이 비어 있습니다",
-    "empty_desc": "파일을 추가하거나 현재 필터를 업데이트해 여기에 항목을 표시하세요.",
-    "select_hint": "선택한 파일이 없습니다",
+    "empty_desc": "항목을 추가하거나 현재 필터를 업데이트해 여기에 표시하세요.",
+    "select_hint": "선택한 항목이 없습니다",
     "deselect": "선택 해제",
-    "select_mode_entered": "다중 선택 모드가 켜졌습니다",
-    "selection_load_failed": "선택할 모든 파일을 불러오지 못했습니다. 다시 시도하세요.",
+    "selection_load_failed": "선택할 모든 항목을 불러오지 못했습니다. 다시 시도하세요.",
     "large_batch": {
       "title": "일괄 작업 확인",
-      "content": "이 작업은 {count}개 파일을 처리하며 시간이 걸릴 수 있습니다. 계속하시겠습니까?",
+      "content": "이 작업은 {count}개 항목을 처리하며 시간이 걸릴 수 있습니다. 계속하시겠습니까?",
       "ok": "계속"
     },
     "drag_action": {
@@ -498,8 +535,8 @@
       "move": "이동"
     },
     "edit_disabled": "편집할 사진 한 장을 선택하세요",
-    "type_image": "사진",
-    "type_images": "사진",
+    "type_image": "이미지",
+    "type_images": "이미지",
     "type_video": "개 비디오",
     "type_videos": "개 비디오",
     "select_title": "선택",
@@ -511,38 +548,63 @@
     "more_actions": "추가 작업",
     "tag_all": "태그",
     "dedup": {
+      "keep_rules": {
+        "title": "보존 규칙",
+        "priority_order": "우선순위",
+        "folders": "우선 폴더",
+        "subfolders": "하위 폴더를 포함합니다. 목록에서 위에 있는 폴더가 우선입니다",
+        "folders_skipped": "설정 없음, 건너뜀",
+        "add_folder": "폴더 추가",
+        "folder_already_added": "이미 추가됨",
+        "format": "우선 형식",
+        "similar_only": "유사 이미지만",
+        "raw_first": "RAW 우선",
+        "jpeg_heic_first": "JPEG / HEIC 우선",
+        "size": "우선 크기",
+        "largest_dimensions": "가장 높은 해상도",
+        "smallest_dimensions": "가장 낮은 해상도",
+        "largest_file_size": "가장 큰 파일 크기",
+        "smallest_file_size": "가장 작은 파일 크기",
+        "ignore": "무시",
+        "time": "우선 날짜",
+        "created_earliest": "가장 오래된 생성 시간",
+        "created_latest": "가장 최근 생성 시간",
+        "modified_earliest": "가장 오래된 수정 시간",
+        "modified_latest": "가장 최근 수정 시간"
+      },
       "title": "중복",
       "tabs": {
         "exact": "중복 항목",
-        "similar": "유사 사진"
+        "similar": "유사 이미지"
       },
       "scanning": "중복 항목 스캔 중...",
       "error_title": "중복 항목을 스캔할 수 없습니다",
-      "error_desc": "스캔을 완료하지 못했습니다. 파일 목록을 업데이트한 후 다시 시도하세요.",
+      "error_desc": "스캔을 완료하지 못했습니다. 파일 목록을 업데이트한 후 다시 시도하세요",
       "empty_title": "현재 목록에 중복 후보가 없습니다",
-      "empty_desc": "필터를 넓히거나 다른 파일 목록에서 실행해 보세요.",
-      "similar_title": "유사 사진 기능은 다음 단계로 준비 중입니다",
-      "similar_desc": "정확한 중복 워크플로를 확장한 뒤 이 탭은 시각적으로 유사한 사진을 위해 사용됩니다.",
+      "empty_desc": "필터를 넓히거나 다른 파일 목록에서 실행해 보세요",
+      "similar_title": "유사 이미지 기능은 다음 단계로 준비 중입니다",
+      "similar_desc": "정확한 중복 워크플로를 확장한 뒤 이 탭은 시각적으로 유사한 이미지를 위해 사용됩니다",
       "similar": {
-        "description": "현재 보기에서 비슷한 사진을 찾습니다.",
-        "analyze": "사진 {count}장 분석",
-        "large_scan_confirm": "사진 {count}장을 분석할까요? 몇 분 정도 걸릴 수 있습니다.",
+        "analyze_images": "유사 이미지 분석",
+        "analyze": "분석",
+        "no_eligible_photos": "분석할 이미지가 없습니다",
+        "large_scan_confirm": "이미지 {count}장을 분석할까요? 몇 분 정도 걸릴 수 있습니다",
         "cancel": "취소",
         "preparing": "현재 결과 준비 중",
         "finding_matches": "가장 가까운 일치 항목 찾는 중",
         "building_sets": "유사 그룹 생성 중",
-        "analyzing": "유사 사진 분석 중",
+        "analyzing": "유사 이미지 분석 중",
         "groups_title": "유사 그룹",
         "results": "결과",
         "groups_count": "유사 그룹 {count}개",
         "load_more": "더 보기",
-        "error_title": "유사 사진을 불러올 수 없습니다",
-        "empty_title": "유사한 사진을 찾을 수 없습니다",
-        "analyze_confirm": "분석",
+        "error_title": "유사 이미지를 불러올 수 없습니다",
+        "empty_title": "유사한 이미지를 찾을 수 없습니다",
         "reanalyze": "다시 분석"
       },
       "reclaimable_size": "정리 가능",
       "groups_title": "중복 그룹",
+      "skipped_cloud_only": "온라인 전용 파일 {count}개를 건너뛰었습니다",
       "actions_title": "작업",
       "compare": "비교",
       "rescan": "다시 스캔",
@@ -555,12 +617,13 @@
       "keep_label": "유지",
       "unkeep_label": "유지 안 함",
       "delete_selected": "선택 항목 삭제",
+      "trash_all": "모두 휴지통으로 이동",
       "delete_all": "모두 삭제",
       "move_selected_to_trash": "휴지통으로 이동 ({count}개 선택 · {size})",
-      "no_removable_files": "휴지통으로 이동할 삭제 가능한 파일이 없습니다",
+      "no_removable_files": "휴지통으로 이동할 삭제 가능한 항목이 없습니다",
       "set_keep": "유지",
       "removable_copies_summary": "삭제 가능한 사본 {count}개 · {size}",
-      "similar_photos_summary": "유사 사진 {count}장 · {size}"
+      "similar_items_summary": "유사 항목 {count}개 · {size}"
     }
   },
   "tooltip": {
@@ -598,7 +661,8 @@
       "recognized_person": "인식된 인물을 찾을 수 없습니다",
       "person_hint": "앨범에서 얼굴을 인덱싱하면 여기에서 인물을 볼 수 있습니다",
       "camera": "카메라를 찾을 수 없습니다",
-      "camera_hint": "카메라 메타데이터가 있는 사진을 추가하면 여기에 표시됩니다"
+      "camera_hint": "카메라 메타데이터가 있는 사진을 추가하면 여기에 표시됩니다",
+      "lens": "렌즈를 찾을 수 없습니다"
     },
     "set_album_cover": {
       "success": "앨범 커버 설정 완료",
@@ -608,14 +672,18 @@
       "success": "바탕 화면 배경이 업데이트되었습니다",
       "failed": "바탕 화면 배경을 설정하지 못했습니다"
     },
-    "refresh_subfolders": {
-      "success": "하위 폴더를 새로 고쳤습니다",
-      "failed": "하위 폴더를 새로 고치지 못했습니다"
+    "refresh_folders": {
+      "success": "폴더를 새로 고쳤습니다",
+      "failed": "폴더를 새로 고치지 못했습니다"
     },
     "copy_image": {
       "success": "{count}개 파일을 클립보드에 복사했습니다",
       "limit": "한 번에 최대 {count}개 파일을 복사할 수 있습니다.",
       "failed": "사진을 복사하지 못했습니다. 지원되지 않는 형식이거나 파일이 손상되었습니다."
+    },
+    "drag_out": {
+      "too_many": "한 번에 최대 {count}개의 파일을 외부로 드래그할 수 있습니다. 선택을 줄여 주세요.",
+      "failed": "파일 드래그를 시작할 수 없습니다. 원본 파일에 접근할 수 있는지 확인하세요."
     },
     "open_external": {
       "mixed_selection": "외부 편집기에서 열려면 사진만 또는 동영상만 선택하세요.",
@@ -639,7 +707,14 @@
     "album_nested": "이 폴더는 다른 앨범과 겹칩니다"
   },
   "statusbar": {
-    "files_summary": "{count} 파일 ({size})"
+    "name_and_size": "파일 이름(크기)",
+    "color_info": "색상 정보",
+    "customize": "상태 표시줄 사용자 지정…",
+    "customize_title": "상태 표시줄 사용자 지정",
+    "restore_defaults": "기본값 복원",
+    "selection_summary": "{count}개 선택됨 ({size})",
+    "files_summary": "{count} 파일 ({size})",
+    "items_summary": "{count}개 항목 ({size})"
   },
   "menu": {
     "select": {
@@ -662,6 +737,7 @@
     "album": {
       "add": "새 앨범",
       "edit": "앨범 편집...",
+      "import_folder": "폴더 가져오기…",
       "scan": "앨범 스캔",
       "reorder": "순서 변경",
       "pause_scan": "스캔 일시중지",
@@ -669,7 +745,7 @@
       "exclude_from_search": "검색에서 제외",
       "remove": "제거",
       "delete_folder": "폴더 삭제",
-      "refresh_subfolders": "하위 폴더 새로고침"
+      "refresh_folders": "폴더 새로고침"
     },
     "file": {
       "new_folder": "새 폴더",
@@ -680,14 +756,14 @@
       "open_image_in_app": "{app}에서 사진 열기...",
       "open_video_in_app": "{app}에서 동영상 열기...",
       "open_selected_images_in_app": "{app}에서 사진 열기...",
-      "compare_selected_images": "비교",
+      "compare_selected_images": "비교...",
       "open_selected_videos_in_app": "{app}에서 동영상 열기...",
       "open_in_app": "외부 앱에서 열기...",
       "manage_app": "앱 관리...",
       "find_similar_images": "관련 사진 찾기",
       "find_person_images": "이 인물 찾기",
       "print": "인쇄...",
-      "rename": "이름 변경",
+      "rename": "이름 변경...",
       "move_to": "이동...",
       "copy_to": "복사...",
       "move_copy": "이동 / 복사",
@@ -703,7 +779,12 @@
       "set_as": "다음으로 설정",
       "set_desktop_wallpaper": "바탕 화면 배경으로 설정",
       "show_info": "정보 보기",
-      "remove_from_collection": "컬렉션에서 제거"
+      "remove_from_collection": "컬렉션에서 제거",
+      "create_montage": "콜라주 만들기...",
+      "save_xmp": "메타데이터를 XMP에 저장",
+      "xmp_save_success": "파일 {count}개의 XMP 메타데이터를 저장했습니다",
+      "xmp_save_failed": "파일 {count}개의 XMP 저장에 실패했습니다",
+      "comment": "설명…"
     },
     "calendar": {
       "monthly": "월별",
@@ -711,9 +792,14 @@
       "time_asc": "오래된 순",
       "time_desc": "최신 순"
     },
+    "location": {
+      "search": "위치 검색"
+    },
     "camera_panel": {
       "camera_title": "카메라",
-      "lens_title": "렌즈"
+      "lens_title": "렌즈",
+      "camera_search": "카메라 검색",
+      "lens_search": "렌즈 검색"
     },
     "search": {
       "clear_history": "검색 기록 지우기"
@@ -727,27 +813,15 @@
     "tag": {
       "rename": "이름 변경",
       "delete": "삭제",
-      "new_group": "그룹 만들기",
-      "edit_group": "그룹 편집",
-      "delete_group": "그룹 삭제",
-      "search": "태그 또는 그룹 검색",
-      "clear_search": "검색 지우기",
-      "active_tag": "이 그룹에 선택한 태그가 있습니다",
-      "name": "이름",
-      "locate": "태그 찾기",
-      "empty": "태그 없음",
-      "move_to": "그룹으로 이동",
-      "delete_message": "“{name}”을 삭제하시겠습니까? 태그는 Default로 이동하며 파일의 태그는 유지됩니다.",
-      "exists_in": "이 태그는 “{group}”에 이미 있습니다.",
-      "name_exists": "같은 이름의 그룹이 이미 있습니다.",
-      "new_tag_group": "새 태그의 그룹"
+      "search": "태그 검색",
+      "clear_search": "검색 지우기"
     },
     "meta": {
       "favorite": "즐겨찾기",
       "unfavorite": "즐겨찾기 해제",
       "tag": "태그...",
       "collection": "컬렉션...",
-      "comment": "메모...",
+      "comment": "설명…",
       "rotate": "보기 회전"
     },
     "sort": {
@@ -757,6 +831,7 @@
   },
   "msgbox": {
     "ok": "확인",
+    "save": "저장",
     "discard": "취소",
     "reset": "초기화",
     "cancel": "취소",
@@ -803,7 +878,6 @@
       "hide": "숨기기",
       "hidden": "숨김",
       "remove": "제거",
-      "reorder": "순서 변경",
       "rename": "이름변경",
       "switch_to": "전환",
       "add_new": "새 라이브러리",
@@ -816,8 +890,6 @@
       "library_file_path": "파일 경로",
       "library_file_size": "파일 크기",
       "created_at": "생성일",
-      "clean_cache": "사용하지 않는 축소판 캐시 정리",
-      "cache_cleaned": "축소판 {count}개 정리, {size} 확보.",
       "cache_size": "축소판 캐시 {size}"
     },
     "remove_library": {
@@ -885,41 +957,73 @@
       "ok": "변경",
       "error": "파일 이름을 변경하지 못했습니다."
     },
+    "batch_rename": {
+      "title": "일괄 이름 변경",
+      "name": "이름",
+      "placeholder": "새 이름",
+      "start": "시작 번호",
+      "digits": "자릿수",
+      "no_padding": "0 채우기 없음",
+      "preview": "미리 보기",
+      "count": "{count}개 항목",
+      "before": "현재 이름",
+      "after": "새 이름",
+      "preview_limit": "처음 100개 항목을 표시합니다. 선택한 모든 항목의 이름이 변경됩니다.",
+      "invalid": "이름과 양의 정수 시작 번호를 입력하세요.",
+      "success": "{count}개 항목의 이름을 변경했습니다."
+    },
+    "file_delete": {
+      "permanent_summary": "파일 {count}개가 영구 삭제됩니다.",
+      "trash_summary": "파일 {count}개가 휴지통으로 이동됩니다.",
+      "title": "파일 {count}개를 영구 삭제하시겠습니까?",
+      "confirm": "파일 {count}개 삭제",
+      "irreversible": "이 작업은 되돌릴 수 없습니다.",
+      "mixed_hint": "RAW 페어에만 적용됩니다. 다른 선택 항목은 항상 전체가 삭제됩니다.",
+      "trash_unavailable": "파일을 휴지통으로 이동할 수 없습니다. 이 드라이브에서 휴지통을 사용할 수 없을 수 있습니다."
+    },
+    "raw_pair_delete": {
+      "scope": "삭제할 RAW 페어 파일",
+      "both": "두 파일 모두",
+      "raw": "RAW만",
+      "companion": "JPEG / HEIC만",
+      "format": "{format}만",
+      "failed": "삭제 실패: {count}건."
+    },
+    "folder_delete_contents": "모든 파일과 하위 폴더가 포함됩니다.",
     "move_to_trash": {
       "title": "휴지통으로 이동",
       "file_content": "'{file}'을(를) 휴지통으로 이동합니다.",
-      "files_content": "{count}개의 파일을 휴지통으로 이동합니다.",
-      "removable_files_content": "삭제 가능한 {count}개의 모든 파일을 휴지통으로 이동합니다.",
-      "raw_jpeg_companions_content": "RAW+JPEG 연결 파일 {count}개도 함께 삭제됩니다.",
+      "files_content": "선택한 {count}개 항목을 휴지통으로 이동합니다.",
+      "removable_files_content": "삭제 가능한 {count}개 항목을 모두 휴지통으로 이동합니다.",
       "folder_content": "'{folder}'을(를) 휴지통으로 이동합니다.",
       "ok": "이동",
       "file_success": "'{file}'을(를) 휴지통으로 이동했습니다.",
-      "files_success": "{count}개의 파일을 휴지통으로 이동했습니다.",
+      "files_success": "선택한 {count}개 항목을 휴지통으로 이동했습니다.",
       "folder_success": "'{folder}'을(를) 휴지통으로 이동했습니다.",
       "file_error": "파일을 휴지통으로 이동하지 못했습니다.",
-      "files_error": "선택한 파일을 휴지통으로 이동하지 못했습니다.",
+      "files_error": "선택한 항목을 휴지통으로 이동하지 못했습니다.",
       "folder_error": "폴더를 휴지통으로 이동하지 못했습니다."
     },
     "permanent_delete": {
       "title": "영구 삭제",
       "file_content": "'{file}' 파일을 영구 삭제합니다.",
-      "files_content": "선택한 {count}개 파일을 영구 삭제합니다.",
-      "removable_files_content": "삭제 가능한 {count}개의 모든 파일을 영구 삭제합니다.",
+      "files_content": "선택한 {count}개 항목을 영구 삭제합니다.",
+      "removable_files_content": "삭제 가능한 {count}개 항목을 모두 영구 삭제합니다.",
       "folder_content": "'{folder}' 폴더를 영구 삭제합니다.",
-      "checkbox": "영구 삭제(되돌릴 수 없음)",
       "ok": "삭제",
       "file_success": "'{file}' 파일을 영구 삭제했습니다.",
-      "files_success": "선택한 {count}개 파일을 영구 삭제했습니다.",
+      "files_success": "선택한 {count}개 항목을 영구 삭제했습니다.",
       "folder_success": "'{folder}' 폴더를 영구 삭제했습니다.",
       "file_error": "파일을 영구 삭제하지 못했습니다.",
-      "files_error": "선택한 파일을 영구 삭제하지 못했습니다.",
+      "files_error": "선택한 항목을 영구 삭제하지 못했습니다.",
       "folder_error": "폴더를 영구 삭제하지 못했습니다."
     },
     "trash_failed": {
       "title": "휴지통으로 이동하지 못했습니다",
       "file_content": "파일 '{file}'을(를) 휴지통으로 이동할 수 없습니다.\n\n대신 영구적으로 삭제하시겠습니까?",
-      "files_content": "선택한 {count}개 파일을 휴지통으로 이동할 수 없습니다.\n\n대신 영구적으로 삭제하시겠습니까?",
-      "folder_content": "폴더 '{folder}'을(를) 휴지통으로 이동할 수 없습니다.\n\n대신 영구적으로 삭제하시겠습니까?",
+      "files_content": "선택한 {count}개 항목을 휴지통으로 이동할 수 없습니다.\n\n대신 영구적으로 삭제하시겠습니까?",
+      "folder_content": "폴더 '{folder}'을(를) 휴지통으로 이동할 수 없습니다.\n\n대신 영구적으로 삭제하시겠습니까?\n\n이 작업은 시스템 휴지통을 통해 되돌릴 수 없습니다.",
+      "folder_partial_warning": "이전 시도로 일부 내용이 휴지통으로 이동했을 수 있습니다.",
       "ok": "영구 삭제"
     },
     "open_external_many": {
@@ -933,15 +1037,15 @@
       "error": "태그를 만들지 못했습니다."
     },
     "delete_tag": {
-      "title": "태그 삭제",
+      "title": "“{tag}”을(를) 삭제할까요?",
       "content": "'{tag}' 태그가 삭제됩니다.",
       "ok": "삭제",
       "success": "'{tag}' 삭제됨.",
       "error": "태그를 삭제하지 못했습니다."
     },
     "edit_comment": {
-      "title": "메모 편집",
-      "placeholder": "메모",
+      "title": "설명 편집",
+      "placeholder": "설명 입력",
       "ok": "확인"
     },
     "select_folder": {
@@ -951,6 +1055,8 @@
       "error": "파일 선택 실패."
     },
     "file_refresh": {
+      "metadata_failed": "메타데이터 가져오기 실패: {count}",
+      "skipped": "건너뜀: {count}",
       "status": "새로 고침 상태",
       "running": "새로 고침 중…",
       "cancelling": "취소 중…",
@@ -1057,12 +1163,64 @@
       "overwrite": "덮어쓰기",
       "save_as_new": "다른 이름으로 저장",
       "overwrite_confirm": "원본 파일을 덮어쓰시겠습니까? 되돌릴 수 없습니다."
+    },
+    "montage": {
+      "title": "콜라주",
+      "layout": "레이아웃",
+      "pile": "자유 배치",
+      "shuffle": "무작위 콜라주",
+      "shadow": "그림자 그리기",
+      "style": "스타일",
+      "export": "내보내기: {size}",
+      "random_rotation": "무작위 회전",
+      "border_width": "테두리 두께",
+      "page": "페이지",
+      "page_size": "크기",
+      "page_screen": "화면 16:9",
+      "page_square": "정사각형",
+      "orientation": "방향",
+      "landscape": "가로",
+      "portrait": "세로",
+      "background": "배경",
+      "spacing": "간격",
+      "border": "테두리",
+      "save_failed": "콜라주를 저장하지 못했습니다:",
+      "not_enough_photos": "콜라주를 만들려면 사진을 2장 이상 선택하세요.",
+      "too_many_photos": "콜라주에는 처음 {count}장의 사진만 사용됩니다.",
+      "save_title": "콜라주 저장",
+      "folder": "폴더",
+      "file_name": "파일 이름",
+      "browse": "찾아보기...",
+      "folder_required": "폴더를 선택하세요."
     }
   },
   "file_info": {
+    "metadata_placeholders": {
+      "e_title": "짧은 제목",
+      "e_headline": "게시용 제목",
+      "comments": "내용을 설명하거나 맥락 추가",
+      "e_artist": "이름",
+      "e_artist_hint": "한 줄에 한 명",
+      "e_copyright": "© {year} 이름"
+    },
+    "edit_metadata_no_fields": "메타데이터를 편집하려면 표시 항목 설정에서 정리 항목을 하나 이상 선택하세요.",
+    "edit_metadata": "메타데이터 편집",
+    "metadata_save_failed": "메타데이터를 저장하지 못했습니다",
+    "paths_copied": "파일 경로 {count}개를 클립보드에 복사했습니다",
+    "copy_path": "파일 경로 복사",
+    "copy_path_failed": "파일 경로를 복사하지 못했습니다",
+    "video_only": "(동영상만)",
+    "field_preset": "표시 항목",
+    "fields_default": "기본값",
+    "fields_all": "모두 표시",
+    "fields_custom": "사용자 지정",
+
+    "hide_empty_fields": "빈 항목 자동 숨기기",
+    "customize_fields": "표시 항목 설정",
     "title": "파일 정보",
     "preview": "미리보기",
     "thumbnail": "썸네일",
+    "change_thumbnail": "썸네일 변경",
     "histogram": "히스토그램",
     "preview_size": "썸네일 크기",
     "general": "일반",
@@ -1078,6 +1236,7 @@
     "dimension": "픽셀 크기",
     "size": "크기",
     "duration": "재생시간",
+    "unknown_duration": "알 수 없음",
     "created_at": "생성일",
     "modified_at": "수정일",
     "last_scan_time": "최근 스캔",
@@ -1108,8 +1267,40 @@
     "gps_altitude": "고도",
     "geo_location": "위치",
     "tags": "태그",
-    "comment": "메모",
-    "capture_settings": "촬영 설정"
+    "comment": "설명",
+    "capture_settings": "노출",
+    "organization": "정리",
+    "file": "파일",
+    "capture": "촬영 정보",
+    "source_metadata": "기타 정보",
+    "source_description": "원본 설명",
+    "coordinates": "좌표",
+    "detail_fields": {
+      "title": "제목",
+      "headline": "헤드라인",
+      "creator": "작성자",
+      "copyright": "저작권",
+      "credit": "제공자",
+      "source": "출처",
+      "usageTerms": "이용 약관",
+      "rightsUrl": "저작권 URL",
+      "software": "소프트웨어",
+      "flash": "플래시",
+      "whiteBalance": "화이트 밸런스",
+      "exposureMode": "노출 모드",
+      "exposureProgram": "노출 프로그램",
+      "meteringMode": "측광 모드",
+      "focalLength35mm": "35mm 환산 초점 거리",
+      "timeZone": "촬영 시간대",
+      "direction": "촬영 방향",
+      "directionRef": "북쪽 기준",
+      "iccProfile": "ICC 프로필",
+      "colorSpace": "색 공간",
+      "bitDepth": "비트 심도"
+    },
+    "metadata_details_retry": "메타데이터를 읽을 수 없습니다. 클릭하여 다시 시도하세요.",
+    "true_north": "진북",
+    "magnetic_north": "자북"
   },
   "map": {
     "show_map": "지도 보기",
@@ -1127,14 +1318,6 @@
     "photos_in_view_limited": "처음 {count}장 표시 중 - 더 보려면 확대하세요"
   },
   "format": {
-    "year": "yyyy년",
-    "month": "yyyy년 M월",
-    "date": "yyyy/MM/dd",
-    "date_long": "yyyy년 M월 d일",
-    "month_date": "M월 d일",
-    "date_long_with_weekday": "yyyy년 M월 d일 EEEE",
-    "date_time": "yyyy/MM/dd HH:mm:ss",
-    "date_time_long": "yyyy년 M월 d일 HH:mm:ss",
     "relative_time": {
       "just_now": "방금",
       "seconds": "{count}초 전",
@@ -1147,12 +1330,17 @@
     }
   },
   "image_viewer": {
+    "sharpness_grid": "내비게이터 선명도 격자",
+    "sharpness_grid_hint": "내비게이터에 선명한 영역을 표시합니다",
     "live": "라이브",
     "motion": "모션",
     "title": "이미지 뷰어",
     "loading": "로딩 중...",
     "loading_original": "원본 사진을 불러오는 중...",
+    "media_server_unavailable": "원본 사진과 동영상을 불러올 수 없습니다. Lap을 다시 시작한 후 재시도하세요.",
     "failed": "사진을 불러오지 못했습니다. 파일이 없거나 손상되었습니다.",
+    "raw_render_unavailable": "이 RAW는 렌더링할 수 없습니다. 내장 미리보기 표시 중.",
+    "af_unavailable": "이 이미지에는 지원되는 AF 데이터가 없습니다",
     "toolbar": {
       "prev": "이전",
       "next": "다음",
@@ -1162,6 +1350,7 @@
       "zoom_out": "축소",
       "zoom_fit": "창 맞춤",
       "zoom_actual": "실제 크기",
+      "af_area": "AF 영역 표시",
       "fullscreen": "전체 화면",
       "exit_fullscreen": "전체 화면 종료",
       "pin": "도구 모음 고정",
@@ -1176,6 +1365,7 @@
     "loading_compatible": "호환 재생을 준비 중...",
     "failed": "재생 실패",
     "errors": {
+      "playback_failed": "재생 실패",
       "aborted": "중단됨",
       "network": "네트워크 오류",
       "decode": "디코딩 오류",
@@ -1193,14 +1383,14 @@
   "settings": {
     "general": {
       "title": "일반",
-      "section_language": "언어",
+      "section_language": "언어 및 지역",
       "section_appearance": "외관",
       "section_interface": "표시",
-      "section_updates": "업데이트",
       "appearance": "색상 모드",
       "appearance_options": [
         "라이트",
-        "다크"
+        "다크",
+        "시스템 설정 따름"
       ],
       "theme": "테마",
       "theme_options_light": [
@@ -1243,6 +1433,11 @@
         "심해"
       ],
       "select_language": "언어",
+      "date_time_format": "날짜 및 시간 형식",
+      "date_time_format_options": [
+        "시스템 설정 따름",
+        "앱 언어 따름"
+      ],
       "font_size": "글꼴 크기",
       "font_size_options": [
         "더 작게",
@@ -1255,16 +1450,36 @@
       "show_status_bar": "상태 표시줄",
       "auto_check_updates": "업데이트 자동 확인"
     },
+    "raw": {
+      "title": "RAW",
+      "section_pairs": "쌍을 이룬 파일",
+      "pair_source": "쌍의 기본 표시",
+      "pair_source_hint": "쌍을 이룬 썸네일과 미리보기에 사용됩니다",
+      "pair_jpeg": "JPEG / HEIC",
+      "rawPreviewSource": "기본 미리보기 소스",
+      "preview_source_hint": "우선 소스를 사용할 수 없으면 다른 소스를 사용합니다",
+      "option_embedded": "내장 미리보기",
+      "option_rendered": "RAW 렌더링",
+      "option_brightened": "자동 밝기 보정",
+      "show_pair": "페어링된 {format} 표시",
+      "source_embedded": "내장 미리보기",
+      "source_rendered": "RAW 렌더링",
+      "source_brightened": "자동 밝기 보정",
+      "preview_mode": "RAW 미리보기 모드"
+    },
+    "metadata": {
+      "title": "메타데이터",
+      "section_import": "메타데이터 가져오기",
+      "import": "EXIF, IPTC 및 XMP에서 가져오기",
+      "import_hint": "스캔 및 새로 고침 시 즐겨찾기, 별점, 선별 표시, 태그와 설명을 가져오며 로컬 편집은 유지합니다."
+    },
     "browse": {
-      "title": "탐색",
-      "section_album": "앨범",
+      "section_album": "앨범 폴더",
       "show_subfolder_files": "하위 폴더의 파일 표시",
       "show_subfolder_files_hint": "폴더 보기에서 하위 폴더의 파일을 포함합니다",
-      "section_file_display": "파일 표시",
       "group_raw_jpeg_pairs": "RAW 쌍을 하나로 표시",
       "group_raw_jpeg_pairs_hint": "일치하는 RAW 및 JPEG/HEIC 파일을 하나의 항목으로 표시합니다",
-      "section_sorting": "정렬",
-      "folder_sort": "폴더",
+      "folder_sort": "폴더 정렬",
       "folder_sort_hint": "앨범 아래에 표시되는 폴더의 정렬 순서입니다",
       "folder_sort_options": [
         "이름 (A-Z)",
@@ -1272,23 +1487,14 @@
         "날짜 (오래된 순)",
         "날짜 (최신 순)"
       ],
-      "calendar_sort": "달력",
-      "calendar_sort_hint": "촬영일 또는 수정일 기준",
       "calendar_sort_options": [
-        "촬영일 (오름차순)",
-        "촬영일 (내림차순)",
-        "생성일 (오름차순)",
-        "생성일 (내림차순)",
-        "수정일 (오름차순)",
-        "수정일 (내림차순)"
+        "촬영일",
+        "생성일",
+        "수정일"
       ],
-      "category_sort": "카테고리",
-      "category_sort_hint": "태그, 위치, 인물 및 카메라",
       "category_sort_options": [
-        "이름 (A-Z)",
-        "이름 (Z-A)",
-        "개수 (낮은 순)",
-        "개수 (높은 순)"
+        "이름",
+        "개수"
       ]
     },
     "grid": {
@@ -1324,7 +1530,7 @@
         "위치",
         "카메라",
         "렌즈",
-        "설정"
+        "노출"
       ],
       "show_thumbnail_badges": "썸네일 배지 표시",
       "thumbnail_badge_options": [
@@ -1401,7 +1607,7 @@
     },
     "image_search": {
       "title": "검색",
-      "search_image": "사진 검색",
+      "search_image": "이미지 검색",
       "search_model": "모델 선택",
       "default_model_hint": "기본 모델은 영어 사진 검색만 지원합니다",
       "multilingual_model_hint": "50개 이상 언어 검색 지원",
@@ -1425,9 +1631,9 @@
       ]
     },
     "similar_photos": {
-      "title": "유사 사진",
+      "title": "유사 이미지",
       "grouping_strictness": "그룹화 엄격도",
-      "grouping_strictness_hint": "같은 그룹으로 묶일 사진의 일치 정도를 설정합니다",
+      "grouping_strictness_hint": "같은 그룹으로 묶일 이미지의 일치 정도를 설정합니다",
       "grouping_strictness_options": [
         "매우 엄격",
         "엄격",
@@ -1458,18 +1664,21 @@
         "last_image": "마지막",
         "page_up": "이전 페이지",
         "page_down": "다음 페이지",
-        "quick_preview": "빠른 미리보기 열기",
+        "quick_preview": "빠른 미리보기 열기 / 이미지 미리보기 닫기",
+        "toggle_playback": "동영상 일시 정지 / 재개",
         "close_viewer": "뷰어 닫기",
         "search_similar": "관련 사진 찾기",
         "show_info": "정보 보기",
         "zoom_in": "확대",
         "zoom_out": "축소",
         "zoom_fit": "실제 크기 / 창 맞춤 전환",
+        "cycle_raw_preview": "RAW 미리보기 모드 전환",
+        "toggle_af_areas": "AF 영역 표시 전환",
         "cycle_background": "배경 전환",
-        "toggle_slideshow": "슬라이드쇼 재생 / 일시정지",
         "open_new_window": "새 창에서 보기",
         "open_external_app": "외부 앱에서 열기",
         "edit_image": "편집",
+        "copy_file_path": "파일 경로 복사",
         "copy_file": "클립보드에 복사",
         "paste_file": "붙여넣기",
         "reveal_in_finder": "Finder에서 보기",
@@ -1485,20 +1694,25 @@
         "delete_permanently": "영구 삭제",
         "refresh_file_info": "파일 정보 새로고침",
         "print": "인쇄",
-        "toggle_favorite": "즐겨찾기 전환",
-        "set_clear_rating": "별점 설정 / 지우기",
-        "mark_pick": "선택으로 표시",
-        "mark_rejected": "제외로 표시",
-        "mark_unreviewed": "미선별로 표시",
+        "toggle_favorite": "즐겨찾기 추가 / 해제",
+        "toggle_favorite_and_next": "즐겨찾기 추가 / 해제 → 다음",
+        "set_clear_rating": "별점",
+        "set_clear_rating_and_next": "별점 → 다음",
+        "mark_pick": "선별 · 선택됨",
+        "mark_pick_and_next": "선별 · 선택됨 → 다음",
+        "mark_rejected": "선별 · 제외됨",
+        "mark_rejected_and_next": "선별 · 제외됨 → 다음",
+        "mark_unreviewed": "선별 · 미선별",
+        "mark_unreviewed_and_next": "선별 · 미선별 → 다음",
         "clear_rating": "별점 지우기",
         "rate_one": "별점 1개",
         "rate_two": "별점 2개",
         "rate_three": "별점 3개",
         "rate_four": "별점 4개",
         "rate_five": "별점 5개",
-        "edit_tags": "태그 편집",
-        "edit_collections": "컬렉션 편집",
-        "edit_comment": "메모 편집",
+        "edit_tags": "태그",
+        "edit_collections": "컬렉션",
+        "edit_comment": "설명",
         "rotate": "보기 시계 방향 회전",
         "rotate_counterclockwise": "보기 반시계 방향 회전",
         "thumbnail_increase": "썸네일 확대",
@@ -1506,44 +1720,66 @@
       }
     },
     "advanced": {
+      "file_delete_behavior": "파일 삭제 시 동작",
+      "file_delete_trash_hint": "파일 1개는 확인 없이 휴지통으로 이동합니다",
+      "file_delete_permanent_hint": "영구 삭제는 항상 확인이 필요합니다",
+      "file_delete_section": "파일 삭제",
       "title": "고급",
-      "section_thumbnail_cache": "썸네일 캐시",
-      "thumbnail_quality": "썸네일 품질",
-      "thumbnail_quality_hint": "생성된 썸네일의 해상도를 설정합니다. 높은 설정일수록 더 선명하지만 생성 시간이 길고 디스크 공간을 더 사용합니다",
-      "raw_thumbnail_source": "RAW 썸네일 소스",
-      "raw_thumbnail_source_hint": "RAW 파일의 썸네일 생성 방식을 선택합니다",
-      "raw_thumbnail_source_options": [
-        "RAW 렌더링(기본값)",
-        "내장 미리보기(더 빠름)"
-      ],
-      "section_map": "지도",
-      "map_provider": "지도 서비스",
-      "map_provider_hint": "지도 보기에 사용할 지도 서비스를 선택합니다",
-      "map_provider_options": [
-        "글로벌(기본값)",
-        "중국(톈디투)"
-      ],
-      "tianditu_token": "톈디투 API 토큰",
-      "tianditu_token_hint": "톈디투 타일에 필요합니다",
-      "tianditu_token_placeholder": "토큰 붙여넣기",
-      "tianditu_token_status_saved": "저장됨",
-      "tianditu_token_status_empty": "설정되지 않음",
-      "thumbnail_quality_options": [
-        "낮음 (256 px)",
-        "표준 (512 px)",
-        "높음 (1024 px)"
-      ],
-      "section_external_apps": "외부 앱",
-      "manage_external_apps": "외부 앱 관리",
-      "external_image_editor": "사진을 다음으로 열기",
-      "external_video_app": "동영상 열기 앱",
-      "external_app_not_selected": "선택된 앱이 없습니다",
-      "choose_app": "선택",
-      "clear_app": "지우기",
-      "default_app": "기본값",
-      "set_default_app": "기본값으로 설정",
+      "external_app": {
+        "section_external_apps": "외부 앱",
+        "manage_external_apps": "외부 앱 관리",
+        "external_image_editor": "사진을 다음으로 열기",
+        "external_video_app": "동영상 열기 앱",
+        "external_app_not_selected": "선택된 앱이 없습니다",
+        "choose_app": "선택",
+        "clear_app": "지우기",
+        "default_app": "기본값",
+        "set_default_app": "기본값으로 설정"
+      },
       "section_diagnostics": "진단",
-      "debug_mode": "디버그 모드"
+      "debug_mode": "디버그 모드",
+      "map": {
+        "section_map": "지도",
+        "map_provider": "지도 서비스",
+        "map_provider_hint": "지도 보기에 사용할 지도 서비스를 선택합니다",
+        "map_provider_options": [
+          "글로벌(기본값)",
+          "중국(톈디투)"
+        ],
+        "tianditu_token": "톈디투 API 토큰",
+        "tianditu_token_hint": "톈디투 타일에 필요합니다",
+        "tianditu_token_placeholder": "토큰 붙여넣기",
+        "tianditu_token_status_saved": "저장됨",
+        "tianditu_token_status_empty": "설정되지 않음"
+      },
+      "thumbnail_cache": {
+        "rolling_back": "되돌리는 중…",
+        "cancelled": "취소되었습니다. 기존 캐시가 유지됩니다.",
+        "new_location": "새 위치: {path}",
+        "migrating": "썸네일 이동 중…",
+        "migration_hint": "모든 라이브러리의 썸네일을 이동합니다. 새 위치는 이동이 모두 완료된 후 적용됩니다. 취소하면 현재 캐시 위치가 유지됩니다.",
+        "migration_progress": "이동 진행률",
+        "ready": "이동 준비 완료",
+        "start": "시작",
+        "cancelling": "취소 중…",
+        "rebuild_message": "이전 썸네일 캐시 위치를 사용할 수 없습니다. 이전 파일을 이동하지 않고 계속할까요? 새 위치에서 필요에 따라 썸네일을 다시 생성합니다. 라이브러리 데이터, 원본 사진 및 이전 드라이브의 캐시 파일은 변경되지 않습니다.",
+        "rebuild_confirm": "계속하고 다시 생성",
+        "section_thumbnail_cache": "썸네일 캐시",
+        "thumbnail_quality": "썸네일 해상도 변경",
+        "thumbnail_quality_hint": "높은 설정일수록 더 선명하지만 생성 시간이 길고 디스크 공간을 더 사용합니다",
+        "thumbnail_quality_options": [
+          "낮음 (256 px)",
+          "표준 (512 px)",
+          "높음 (1024 px)"
+        ],
+        "unavailable": "캐시 위치를 사용할 수 없습니다. 사용하거나 이동하기 전에 드라이브를 다시 연결하세요.",
+        "current_location": "캐시 위치 변경",
+        "counting": "캐시 파일 집계 중…",
+        "finishing": "캐시 이동 마무리 중…",
+        "success": "썸네일 캐시 위치가 변경되었습니다",
+        "cleanup_warning": "캐시를 이동했지만 일부 이전 파일을 삭제하지 못했습니다:",
+        "busy": "썸네일 캐시 이동이 완료될 때까지 기다려 주세요."
+      }
     },
     "database": {
       "title": "저장소",
@@ -1560,6 +1796,7 @@
       "restore_default_confirm_ok": "재설정",
       "busy_library_indexing": "라이브러리 인덱싱이 실행 중일 때는 데이터 위치를 변경할 수 없습니다.",
       "busy_face_indexing": "얼굴 인덱싱이 실행 중일 때는 데이터 위치를 변경할 수 없습니다.",
+      "cleanup_warning": "라이브러리 데이터가 이동되었지만 일부 이전 파일을 삭제하지 못했습니다:",
       "change_success": "라이브러리 데이터가 성공적으로 이동되었습니다",
       "restore_default_success": "라이브러리 데이터가 기본 위치로 다시 이동되었습니다",
       "backup": "백업",
@@ -1615,6 +1852,7 @@
         "feedback": "피드백",
         "privacy": "개인정보"
       },
+      "section_updates": "업데이트",
       "auto_update": {
         "update": "업데이트",
         "check": "업데이트 확인",

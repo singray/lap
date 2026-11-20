@@ -1,5 +1,16 @@
 <template>
   <ModalDialog :title="title" :width="500" position-key="move-to" @cancel="clickCancel">
+    <template #title-actions>
+      <button
+        type="button"
+        class="t-button-default btn-outline gap-1.5"
+        :disabled="!canCreateFolder || creatingFolder"
+        @click="startNewFolder"
+      >
+        <IconAdd class="w-4 h-4" aria-hidden="true" />
+        {{ $t('msgbox.new_folder.title') }}
+      </button>
+    </template>
     <!-- select album and folder -->
     <div class="h-[400px] overflow-auto">
       <AlbumList ref="albumListRef" 
@@ -17,7 +28,7 @@
 
       <button 
         class="t-button-primary" 
-        :disabled="(libConfig.destFolder.albumId ?? 0) == 0 || libConfig.destFolder.selected"
+        :disabled="(libConfig.destFolder.albumId ?? 0) == 0 || libConfig.destFolder.selected || creatingFolder || renamingFolder"
         @click="clickOk"
       >{{ OkText }}</button>
     </div>
@@ -25,9 +36,10 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted } from 'vue';
+import { computed, ref, onMounted, onUnmounted } from 'vue';
 import { libConfig } from '@/common/config';
 import { listen, type Event } from '@tauri-apps/api/event';
+import { IconAdd } from '@/common/icons';
 import { useUIStore } from '@/stores/uiStore';
 
 import ModalDialog from '@/components/ModalDialog.vue';
@@ -58,6 +70,21 @@ const props = defineProps({
 
 const emit = defineEmits(['ok', 'cancel']);
 const uiStore = useUIStore();
+const albumListRef = ref<InstanceType<typeof AlbumList> | null>(null);
+const startingNewFolder = ref(false);
+const creatingFolder = computed(() => startingNewFolder.value || !!albumListRef.value?.isCreatingFolder);
+const renamingFolder = computed(() => uiStore.isInputActive('AlbumFolder-rename'));
+const canCreateFolder = computed(() => !renamingFolder.value && !!albumListRef.value?.canCreateSelectedFolder);
+
+async function startNewFolder() {
+  if (!canCreateFolder.value || creatingFolder.value) return;
+  startingNewFolder.value = true;
+  try {
+    await albumListRef.value?.startNewFolder();
+  } finally {
+    startingNewFolder.value = false;
+  }
+}
 
 let unlistenKeydown: () => void;
 
@@ -90,7 +117,7 @@ function handleKeyDown(event: Event<KeyPayload>) {
 }
 
 const clickOk = () => {
-  if ((libConfig.destFolder.albumId ?? 0) > 0 && !libConfig.destFolder.selected) {
+  if ((libConfig.destFolder.albumId ?? 0) > 0 && !libConfig.destFolder.selected && !creatingFolder.value && !renamingFolder.value) {
     emit('ok');
   }
 };

@@ -1,5 +1,16 @@
 <template>
-  <ModalDialog :title="$t('collection.edit_collections')" :width="500" :position-key="positionKey" @cancel="close">
+  <ModalDialog :title="$t('collection.edit_collections') + (collections.length ? ` (${collections.length.toLocaleString()})` : '')" :width="500" :position-key="positionKey" @cancel="close">
+    <template #title-actions>
+      <button
+        type="button"
+        class="t-button-default btn-outline gap-1.5"
+        :disabled="creatingCollection || applying || isAddingCollection || renamingId !== null || collections.length >= config.main.maxCollectionCount"
+        @click="startNewCollection"
+      >
+        <IconAdd class="w-4 h-4" aria-hidden="true" />
+        {{ $t('collection.add') }}
+      </button>
+    </template>
     <section class="space-y-3">
       <div class="flex items-center gap-2">
         <div class="grow h-8 flex items-center rounded-box overflow-hidden bg-base-100 border border-neutral-content/30 focus-within:border-primary">
@@ -10,22 +21,9 @@
           </button>
         </div>
       </div>
-      <div class="flex items-center justify-between gap-2">
-        <span class="text-xs uppercase tracking-widest font-bold text-base-content/30 select-none">{{ $t('collection.title') }} ({{ collections.length }})</span>
-        <button
-          type="button"
-          class="p-1 rounded-box text-base-content/40 hover:text-primary hover:bg-primary/10 disabled:opacity-30 disabled:cursor-not-allowed"
-          :title="$t('collection.add')"
-          :aria-label="$t('collection.add')"
-          :disabled="creatingCollection || applying || collections.length >= config.main.maxCollectionCount"
-          @click="startNewCollection"
-        >
-          <IconAdd class="w-5 h-5 cursor-pointer" />
-        </button>
-      </div>
       <div class="min-h-48 max-h-[50vh] overflow-y-auto rounded-box p-2 bg-base-100/30 border border-base-content/10 select-none">
         <div v-if="isAddingCollection" class="px-7 py-1 flex items-center gap-1 text-primary">
-          <IconBookmark class="w-4 h-4 shrink-0" />
+          <IconCollection class="w-4 h-4 shrink-0" />
           <input
             ref="newCollectionNameInput"
             v-model="newCollectionName"
@@ -64,7 +62,7 @@
               @change="toggle(collection.id)"
             />
           </label>
-          <IconBookmark class="w-4 h-4 shrink-0" />
+          <IconCollection class="w-4 h-4 shrink-0" />
           <input
             v-if="renamingId === Number(collection.id)"
             ref="renameInput"
@@ -90,7 +88,7 @@
             class="shrink-0 hidden group-hover:flex"
           >
             <button type="button" class="p-1 text-base-content/40 hover:text-base-content cursor-pointer" :title="$t('collection.rename')" @click.stop="startRename(collection)">
-              <IconEdit class="w-4 h-4" />
+              <IconRename class="w-4 h-4" />
             </button>
             <button type="button" class="p-1 text-base-content/40 hover:text-error cursor-pointer" :title="$t('collection.delete')" @click.stop="deleteCollection(collection)">
               <IconTrash class="w-4 h-4 cursor-pointer" />
@@ -125,7 +123,7 @@ import { emit as tauriEmit } from '@tauri-apps/api/event';
 import { useI18n } from 'vue-i18n';
 import { useToast } from '@/common/toast';
 import { addFilesToCollection, createCollection, deleteCollection as deleteCollectionApi, getCollectionSelectionCounts, listCollections, removeFilesFromCollection, renameCollection } from '@/common/api';
-import { IconAdd, IconBookmark, IconClose, IconEdit, IconSearch, IconTrash } from '@/common/icons';
+import { IconAdd, IconCollection, IconClose, IconRename, IconSearch, IconTrash } from '@/common/icons';
 import { config, libConfig } from '@/common/config';
 import MessageBox from '@/components/MessageBox.vue';
 import ModalDialog from '@/components/ModalDialog.vue';

@@ -65,7 +65,7 @@ const { locale, messages } = useI18n();
 const localeMsg = computed(() => messages.value[locale.value] as any);
 
 // Title for the year
-const yearTitle = computed(() => formatDate(props.year, 1, 1, localeMsg.value.format.year));
+const yearTitle = computed(() => formatDate(props.year, 1, 1, 'year'));
 
 // Sum the count values for the given month
 function sumMonthCount(month: number) {

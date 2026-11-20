@@ -3,17 +3,26 @@
 
     <!-- Dropdown Trigger -->
     <button tabindex="-1"
-      class="px-2 py-1 w-full h-8 flex items-center outline-none rounded-box gap-1 border transition-colors duration-300 text-sm whitespace-nowrap"
+      :title="title"
+      class="flex items-center outline-none rounded-box transition-colors duration-300 whitespace-nowrap"
       :class="[
-        disabled ? 'text-base-content/30 cursor-default' : 'hover:bg-base-100/30 hover:text-base-content cursor-pointer',
-        selected ? 'border-primary text-primary' : 'border-base-content/15'
+        size === 'small' ? 'h-6 text-xs' : 'h-8 py-1 text-sm',
+        iconOnly
+          ? (size === 'small' ? 'px-0 w-6 justify-center' : 'px-0 w-8 justify-center')
+          : (size === 'small' ? 'px-1.5 w-full gap-1 border' : 'px-2 w-full gap-1 border'),
+        iconOnly ? '' : (selected ? 'border-primary' : 'border-base-content/15'),
+        disabled
+          ? 'text-base-content/30 cursor-default'
+          : (selected ? 'text-primary' : 'text-base-content/70'),
+        disabled ? '' : 'hover:bg-base-100/30 hover:text-base-content cursor-pointer'
       ]"
       :disabled="disabled"
       @click="toggleDropdown"
     >
       <component v-if="icon" :is="icon" class="w-4 h-4 shrink-0" />
-      <span>{{ triggerLabel }}</span>
-      <IconArrowDown class="w-3 h-3 shrink-0 opacity-50" />
+      <span v-if="!iconOnly">{{ triggerLabel }}</span>
+      <slot name="trigger-suffix" />
+      <IconArrowDown v-if="!iconOnly" class="w-3 h-3 shrink-0 opacity-50" />
     </button>
 
     <!-- Dropdown Menu -->
@@ -27,7 +36,9 @@
           <!-- menu group 1 -->
           <template v-for="(option, index) in options" :key="index">
             <button
-              class="p-1 flex flex-row hover:bg-base-100/30 hover:text-base-content hover:rounded-box cursor-pointer text-sm whitespace-nowrap "
+              class="p-1 flex flex-row text-sm whitespace-nowrap"
+              :disabled="optionsDisabled"
+              :class="optionsDisabled ? 'opacity-40 cursor-default' : 'hover:bg-base-100/30 hover:text-base-content hover:rounded-box cursor-pointer'"
               @click="selectOption(index)"
             >
               <div class="w-5">
@@ -38,6 +49,10 @@
             </button>
             <div v-if="separatorsAfter.includes(index)" class="mx-2 my-1 border-t border-base-content/10"></div>
           </template>
+
+          <div @click="isDropDown = false">
+            <slot name="menu-after" />
+          </div>
 
           <!-- seperator -->
           <div v-if="extendOptions.length > 0 " class="mx-2 my-1 border-t border-base-content/10"></div>
@@ -93,6 +108,10 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+  optionsDisabled: {
+    type: Boolean,
+    default: false,
+  },
   extendDisabled: {
     type: Boolean,
     default: false,
@@ -120,6 +139,18 @@ const props = defineProps({
   icon: {
     type: Object,
     default: null,
+  },
+  iconOnly: {
+    type: Boolean,
+    default: false,
+  },
+  size: {
+    type: String,
+    default: 'medium', // 'small' | 'medium'
+  },
+  title: {
+    type: String,
+    default: '',
   },
 });
 
@@ -224,6 +255,7 @@ const handleClickOutside = (event) => {
 };
 
 const selectOption = (index) => {
+  if (props.disabled || props.optionsDisabled) return;
   if (props.multiSelect) {
     const optionValue = Number(props.options[index]?.value);
     if (Number.isNaN(optionValue)) return;

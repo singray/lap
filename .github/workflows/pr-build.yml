@@ -117,7 +117,6 @@ jobs:
           key: ${{ runner.os }}-models-${{ hashFiles('scripts/download_models.sh', 'scripts/download_models.ps1') }}
 
       - name: Download AI Models
-        if: steps.cache-ai-models.outputs.cache-hit != 'true'
         shell: bash
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
@@ -281,7 +280,6 @@ jobs:
           key: ${{ runner.os }}-models-${{ hashFiles('scripts/download_models.sh', 'scripts/download_models.ps1') }}
 
       - name: Download AI Models (Windows)
-        if: steps.cache-ai-models.outputs.cache-hit != 'true'
         shell: pwsh
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
@@ -300,6 +298,15 @@ jobs:
         with:
           arch: ${{ matrix.msvc_arch }}
           vsversion: ${{ matrix.msvc_vsversion }}
+
+      - name: Set MSI runtime prerequisite version
+        shell: pwsh
+        run: |
+          if (-not $env:VCToolsVersion) { throw "MSVC toolset version is missing." }
+          $toolset = [version]$env:VCToolsVersion.Trim()
+          $minimum = [version]::new($toolset.Major, $toolset.Minor, [Math]::Max(0, $toolset.Build), [Math]::Max(0, $toolset.Revision))
+          "TAURI_LAP_VC_RUNTIME_MIN_VERSION=$minimum" >> $env:GITHUB_ENV
+          Write-Host "MSI runtime minimum: $minimum"
 
       - name: Remove ranlib from PATH
         shell: pwsh
@@ -328,6 +335,8 @@ jobs:
       - name: Build and Sign (Windows ${{ matrix.arch }})
         uses: tauri-apps/tauri-action@v0.5
         env:
+          # Work around ort-sys 2.0.0-rc.10 copy-dylibs breaking with Cargo's build-dir layout v2.
+          __CARGO_TEMPORARY_BUILD_DIR_NEW_LAYOUT_OPT_OUT: "1"
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APTABASE_KEY: ${{ secrets.APTABASE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -336,6 +345,13 @@ jobs:
           projectPath: .
           tauriScript: tauri
           args: --verbose --target ${{ matrix.target }} --bundles msi --config '{"bundle":{"createUpdaterArtifacts":false}}'
+
+      - name: Verify MSI runtime prerequisite
+        shell: pwsh
+        run: |
+          $msis = @(Get-ChildItem -Path "src-tauri/target/${{ matrix.target }}/release/bundle/msi" -Filter "*.msi" -File)
+          if ($msis.Count -ne 1) { throw "Expected exactly one Windows MSI." }
+          .\scripts\test_windows_msi_runtime.ps1 -MsiPath $msis[0].FullName
 
       - name: Rename Windows package for PR build
         shell: pwsh
@@ -374,7 +390,7 @@ jobs:
       matrix:
         include:
           - arch: x86_64
-            runner: ubuntu-latest
+            runner: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
           - arch: aarch64
             runner: ubuntu-24.04-arm
@@ -449,7 +465,6 @@ jobs:
           key: ${{ runner.os }}-models-${{ hashFiles('scripts/download_models.sh', 'scripts/download_models.ps1') }}
 
       - name: Download AI Models
-        if: steps.cache-ai-models.outputs.cache-hit != 'true'
         shell: bash
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
@@ -542,9 +557,22 @@ jobs:
               --prerelease
           fi
 
+          # Remove only the stale assets whose file type was rebuilt in THIS run,
+          # so a partial run (e.g. macOS only) keeps the other platforms' files.
+          # Extensions are platform-unique (dmg | msi/sig | deb/AppImage/zsync),
+          # so matching the produced extensions scopes the cleanup per platform.
+          mapfile -t rebuilt_exts < <(find release-files -type f | sed -E 's/.*(\.[A-Za-z0-9]+)$/\1/' | sort -u)
+
           gh release view "$TAG" -R "$GH_REPO" --json assets --jq '.assets[].name' | while IFS= read -r asset; do
             [ -n "$asset" ] || continue
-            gh release delete-asset "$TAG" "$asset" -R "$GH_REPO" -y
+            ext=".${asset##*.}"
+            for e in "${rebuilt_exts[@]}"; do
+              if [ "${ext,,}" = "${e,,}" ]; then
+                echo "Deleting stale asset for a rebuilt platform: $asset"
+                gh release delete-asset "$TAG" "$asset" -R "$GH_REPO" -y
+                break
+              fi
+            done
           done
 
-          find release-files -type f | xargs gh release upload "$TAG" -R "$GH_REPO" --clobber
+          find release-files -type f -print0 | xargs -0 -r gh release upload "$TAG" -R "$GH_REPO" --clobber

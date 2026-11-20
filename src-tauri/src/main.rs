@@ -13,32 +13,40 @@
 use tauri::Manager;
 use tauri_plugin_aptabase::EventTracker;
 
+mod metadata;
 mod t_ai;
 mod t_ai_png;
-mod t_apple_sidecar;
+mod t_batch_rename;
 mod t_cluster;
 mod t_cmds;
 mod t_common;
 mod t_config;
 mod t_dedup;
+mod t_drag;
 mod t_embedded_jpeg;
 mod t_face;
 mod t_heif;
 mod t_http;
+mod t_affinity;
 mod t_image;
+mod t_af_area;
 mod t_jpeg;
 mod t_jxl;
 mod t_lens;
 mod t_libraw;
+mod t_raw_display;
 mod t_menu;
 mod t_migration;
-mod t_tag_groups;
+mod t_montage;
+mod t_tags;
 mod t_motion_photo;
 mod t_pasteboard;
 mod t_protocol;
 mod t_similar;
 mod t_sqlite;
 mod t_storage;
+mod t_cache_storage;
+mod t_startup;
 mod t_utils;
 mod t_video;
 
@@ -49,6 +57,7 @@ async fn main() {
         eprintln!("Unhandled panic: {}", panic_info);
     }));
 
+    let startup = t_startup::StartupState::default();
     let builder = tauri::Builder::default();
     let builder = t_protocol::register_protocols(builder);
 
@@ -62,13 +71,22 @@ async fn main() {
     };
 
     let run_result = builder
-        .plugin(tauri_plugin_window_state::Builder::default().build()) // macOS: ~/Library/Application Support/{APP_NAME}/window-state.json
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                // Let the frontend show the window after its first themed render.
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::all()
+                        & !tauri_plugin_window_state::StateFlags::VISIBLE,
+                )
+                .build(),
+        )
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(startup)
         .manage(t_video::VideoManager::default())
         .manage(t_ai::AiState(std::sync::Mutex::new(t_ai::AiEngine::new())))
         .manage(t_face::FaceState(std::sync::Arc::new(
@@ -97,6 +115,7 @@ async fn main() {
         .manage(t_dedup::DedupState::default())
         .manage(t_similar::SimilarState::default())
         .setup(|_app| {
+            t_startup::mark(&_app.handle(), "setup-started");
             t_video::init_ffmpeg_path(&_app.handle());
             t_config::set_app_identifier(&_app.config().identifier);
             t_menu::install_app_menu(&_app.handle())?;
@@ -114,14 +133,15 @@ async fn main() {
             // wheel+ctrlKey events for touchpad pinch. Touchscreen pinch is still
             // handled by our pointer-event logic (with `touch-action: none`).
 
+            t_startup::mark(&_app.handle(), "database-started");
             // Create the database on startup
-            if let Err(e) = t_sqlite::create_db() {
-                eprintln!("Failed to initialize database: {}", e);
+            match t_sqlite::create_db() {
+                Ok(()) => t_startup::mark(&_app.handle(), "database-ready"),
+                Err(error) => {
+                    t_startup::mark(&_app.handle(), "database-failed");
+                    eprintln!("Failed to initialize database: {}", error);
+                }
             }
-
-            // Initialize video HTTP server for Linux
-            #[cfg(target_os = "linux")]
-            t_http::init_video_http_server();
 
             // Cleanup video cache
             t_video::init_video_cache(&_app.handle());
@@ -131,47 +151,11 @@ async fn main() {
                     eprintln!("Failed to restore asset scopes: {}", e);
                 }
             }
-
-            // Initialize AI Engine
-            let app_handle = _app.handle();
-            let ai_state = _app.state::<t_ai::AiState>();
-            let mut ai_engine = ai_state.0.lock().unwrap();
-            match ai_engine.load_models(app_handle) {
-                Ok(_) => println!("AI Engine started successfully"),
-                Err(e) => {
-                    eprintln!("Failed to start AI Engine: {}", e);
-                    #[cfg(target_os = "windows")]
-                    {
-                        let arch_key = if cfg!(target_arch = "aarch64") {
-                            r"HKLM\SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\ARM64"
-                        } else {
-                            r"HKLM\SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\X64"
-                        };
-                        let result = std::process::Command::new("reg")
-                            .args(["query", arch_key, "/v", "Installed"])
-                            .stdout(std::process::Stdio::null())
-                            .status();
-                        let installed = result.is_ok() && result.unwrap().success();
-                        if !installed {
-                            let arch = if cfg!(target_arch = "aarch64") { "arm64" } else { "x64" };
-                            let url = format!("https://aka.ms/vs/17/release/vc_redist.{}.exe", arch);
-                            let _ = std::process::Command::new("powershell")
-                                .args(["-NoProfile", "-Command", &format!(
-                                    r#"$wsh = New-Object -ComObject Wscript.Shell; $wsh.Popup('Lap requires the Microsoft Visual C++ Redistributable.`n`nA download page will open in your browser.`nPlease install it, then restart Lap.', 0, 'Lap - Missing Dependency', 0x30); Start-Process '{}'"#,
-                                    url
-                                )])
-                                .stdout(std::process::Stdio::null())
-                                .stderr(std::process::Stdio::null())
-                                .status();
-                            std::process::exit(1);
-                        }
-                    }
-                }
+            if let Err(error) = t_http::init_original_media_server(_app.handle()) {
+                eprintln!("Failed to initialize original media server: {error}");
             }
 
-            if !t_sqlite::is_database_corrupted() {
-                t_utils::start_folder_mtime_sync(_app.handle().clone());
-            }
+            t_startup::mark(&_app.handle(), "setup-ready");
 
             // Open devtools in development mode
             // #[cfg(debug_assertions)] // only include this block in debug builds
@@ -222,12 +206,22 @@ async fn main() {
             t_menu::handle_menu_event(app, event);
         })
         .invoke_handler(tauri::generate_handler![
+            t_startup::record_startup_stage,
+            t_startup::finish_startup,
+            t_startup::get_ai_initialization_status,
+            t_drag::start_file_drag,
+            t_drag::cancel_file_drag,
             // library
             t_cmds::get_app_config,
+            t_cmds::get_system_region_locale,
             t_cmds::get_supported_format_extensions,
             t_cmds::get_ffmpeg_backed_image_extensions,
             t_cmds::check_gstreamer_available,
             t_cmds::set_last_selected_item_index,
+            t_cmds::get_thumbnail_cache_location,
+            t_cmds::get_thumbnail_cache_migration_count,
+            t_cmds::change_thumbnail_cache_location,
+            t_cmds::cancel_thumbnail_cache_migration,
             t_cmds::get_db_storage_dir,
             t_cmds::is_using_custom_db_storage,
             t_cmds::change_db_storage_dir,
@@ -271,6 +265,7 @@ async fn main() {
             t_cmds::move_folder_outside_library,
             t_cmds::copy_folder,
             t_cmds::delete_folder,
+            t_cmds::prepare_folder_delete,
             t_cmds::delete_folder_permanently,
             t_cmds::reveal_path,
             t_cmds::open_external_url,
@@ -318,18 +313,24 @@ async fn main() {
             t_cmds::get_files_by_ids,
             t_cmds::get_folder_files,
             t_cmds::sync_album_folder_mtimes,
-            t_cmds::refresh_album_subfolders,
+            t_cmds::reconcile_raw_jpeg_pairs,
+            t_cmds::refresh_album_folders,
             t_cmds::is_directory_accessible,
             t_cmds::get_folder_thumb_count,
             // file operations
             t_cmds::edit_image,
+            t_cmds::render_montage,
             t_cmds::copy_edited_image,
             t_cmds::copy_images,
+            t_cmds::copy_file_paths,
             t_cmds::rename_file,
+            t_cmds::preview_batch_rename,
+            t_cmds::batch_rename_files,
             t_cmds::move_file,
             t_cmds::move_file_outside_library,
             t_cmds::copy_file,
             t_cmds::import_file,
+            t_cmds::import_files,
             t_cmds::import_and_organize,
             t_cmds::cancel_import_and_organize,
             t_cmds::import_url,
@@ -343,17 +344,26 @@ async fn main() {
             t_cmds::delete_db_file,
             t_cmds::batch_delete_files,
             // file metadata
-            t_cmds::edit_file_comment,
+            t_cmds::edit_file_metadata,
             t_cmds::clean_unused_thumbnail_cache,
             t_cmds::get_file_thumb,
             t_cmds::get_file_thumb_by_id,
             t_cmds::get_file_thumbs,
             t_cmds::get_file_info,
+            t_cmds::get_file_metadata_details,
+            t_cmds::cancel_file_metadata_requests,
             t_cmds::update_file_info,
+            t_cmds::begin_file_transfer_batch,
+            t_cmds::end_file_transfer_batch,
+            t_cmds::begin_file_refresh_batch,
+            t_cmds::end_file_refresh_batch,
             t_cmds::refresh_selected_file_info,
+            t_cmds::change_video_thumbnail,
+            t_cmds::is_cloud_only_file,
             t_cmds::prepare_motion_photo_video,
             t_cmds::add_file_to_db,
             t_cmds::check_file_exists,
+            t_cmds::check_file_accessibility,
             t_cmds::set_file_rotate,
             t_cmds::get_file_has_tags,
             // favorite
@@ -366,17 +376,17 @@ async fn main() {
             t_cmds::set_file_rating,
             t_cmds::set_file_culling_flag,
             t_cmds::batch_update_file_metadata,
+            // xmp
+            t_cmds::get_xmp_import_settings,
+            t_cmds::set_xmp_import_settings,
+            t_cmds::save_xmp_metadata,
             // tag
-            t_cmds::get_tag_group_name,
-            t_cmds::get_tag_groups,
-            t_cmds::save_tag_group,
-            t_cmds::reorder_tag_groups,
-            t_cmds::delete_tag_group,
-            t_cmds::move_tags_to_group,
             t_cmds::get_all_tags,
             t_cmds::get_tag_counts,
             t_cmds::get_tag_name,
             t_cmds::create_tag,
+            t_cmds::move_tag,
+            t_cmds::get_tag_subtree_info,
             t_cmds::rename_tag,
             t_cmds::delete_tag,
             t_cmds::get_tags_for_file,
@@ -415,6 +425,7 @@ async fn main() {
             t_cmds::rename_person,
             t_cmds::delete_person,
             t_cmds::get_faces_for_file,
+            t_af_area::get_af_areas,
             t_cmds::get_person_thumbnail,
             // dedup
             t_cmds::dedup_start_scan,
@@ -423,6 +434,7 @@ async fn main() {
             t_cmds::dedup_list_groups,
             t_cmds::dedup_get_overview,
             t_cmds::dedup_set_keep,
+            t_cmds::dedup_get_group_items,
             t_cmds::dedup_delete,
             t_cmds::similar_start_scan,
             t_cmds::similar_get_scan_status,
@@ -435,6 +447,7 @@ async fn main() {
             t_cmds::similar_has_scan,
             // video
             t_video::prepare_video,
+            t_http::original_media_base_url,
             t_video::cancel_video_prepare,
             t_video::clear_video_cache,
             // backup / restore

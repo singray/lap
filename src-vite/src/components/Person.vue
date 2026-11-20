@@ -46,6 +46,7 @@
         BETA
       </span>
 
+      <SortMenuButton v-model="config.settings.personSort" kind="category" />
       <ContextMenu :menuItems="personPanelMenuItems" :iconMenu="IconMore" :smallIcon="true" />
     </div>
 
@@ -54,14 +55,14 @@
         :class="[
           'h-8 flex items-center rounded-box transition-colors bg-base-100/40',
           isPersonSearchFocused ? 'border-2 border-primary' : 'border border-base-content/10 hover:border-base-content/30',
-          !isLoadingPersons && allPersonCount === 0 ? 'opacity-50' : '',
+          personSearchDisabled ? 'opacity-50' : '',
         ]"
       >
         <IconSearch class="ml-2 w-4 h-4 shrink-0" :class="isPersonSearchFocused ? 'text-primary/70' : 'text-base-content/30'" />
         <input
           v-model="personSearch"
           type="text"
-          :disabled="!isLoadingPersons && allPersonCount === 0"
+          :disabled="personSearchDisabled"
           :placeholder="$t('menu.person.search')"
           class="w-full min-w-0 bg-transparent border-none focus:ring-0 px-2 text-sm placeholder-base-content/30 focus:outline-none disabled:opacity-50"
           @focus="isPersonSearchFocused = true"
@@ -70,7 +71,7 @@
         <button
           v-if="personSearch"
           type="button"
-          :disabled="!isLoadingPersons && allPersonCount === 0"
+          :disabled="personSearchDisabled"
           class="mr-1 p-1 rounded-box text-base-content/30 hover:text-base-content/70 disabled:opacity-30"
           @click="personSearch = ''"
         >
@@ -208,7 +209,8 @@ import { ref, onMounted, onUnmounted, computed, nextTick, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { config, libConfig } from '@/common/config';
 import { getPersonsPage, renamePerson, deletePerson, indexFaces, cancelFaceIndex, isFaceIndexing, listenFaceIndexProgress, listenFaceIndexFinished, listenClusterProgress, resetFaces, getFaceStats } from '@/common/api';
-import { SIDEBAR } from '@/common/constants';
+import { useLibraryChangeRefresh } from '@/composables/useLibraryChangeRefresh';
+import { SIDEBAR, PERSON_PAGE_SIZE } from '@/common/constants';
 import { 
   IconPerson, 
   IconMore, 
@@ -221,6 +223,7 @@ import {
 
 import ContextMenu from '@/components/ContextMenu.vue';
 import MessageBox from '@/components/MessageBox.vue';
+import SortMenuButton from '@/components/SortMenuButton.vue';
 
 const props = defineProps({
   titlebar: {
@@ -261,7 +264,12 @@ const hasMorePersons = ref(false);
 const allPersonCount = ref(0);
 const personSearch = ref('');
 const isPersonSearchFocused = ref(false);
-const PERSON_PAGE_SIZE = 100;
+// Disable search only for a truly empty library; never lock it on a zero-match
+// search (allPersonCount now reflects the query), so the user can always clear it.
+const personSearchDisabled = computed(
+  () => !isLoadingPersons.value && allPersonCount.value === 0 && !personSearch.value,
+);
+
 let personLoadRequest = 0;
 let personSearchTimer: ReturnType<typeof setTimeout> | null = null;
 let isPersonMounted = true;
@@ -382,7 +390,7 @@ onMounted(async () => {
   });
 });
 
-watch(() => config.settings.categorySort, () => {
+watch(() => config.settings.personSort, () => {
   loadPersons();
 });
 
@@ -424,7 +432,7 @@ async function loadPersons(reset = true, validateSelectedPerson = false) {
 
   try {
     const page = await getPersonsPage({
-      sort: config.settings.categorySort,
+      sort: config.settings.personSort,
       offset: reset ? 0 : allPersons.value.length,
       limit: PERSON_PAGE_SIZE,
       search,
@@ -447,8 +455,8 @@ async function loadPersons(reset = true, validateSelectedPerson = false) {
         ? page.persons
         : [...allPersons.value, ...page.persons];
       hasMorePersons.value = page.has_more;
-      if (page.visible_total != null) allPersonCount.value = page.visible_total;
-      else if (!search) allPersonCount.value = page.total;
+      // `total` is the search-filtered visible count, so the header reflects the query.
+      allPersonCount.value = page.total;
       if (allPersons.value.length > 0 && !selectedPerson.value && !selectedPersonWasFiltered) {
         const index = allPersons.value.findIndex(p => p.id === libConfig.person?.id);
         selectPerson(allPersons.value[index >= 0 ? index : 0]);
@@ -598,6 +606,11 @@ async function checkFaceStats() {
     incompleteCount.value = stats.unprocessed;
   }
 }
+
+useLibraryChangeRefresh(() => {
+  void loadPersons(true, true);
+  void checkFaceStats();
+});
 
 // Only refresh the active view. Inactive panel data is refreshed on re-entry.
 

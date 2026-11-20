@@ -16,6 +16,7 @@
           {{ tab.label }}
         </button>
       </div>
+      <SortMenuButton v-model="config.settings.calendarSort" kind="calendar" />
     </div>
 
     <!-- calendar -->
@@ -36,7 +37,7 @@
                 :class="['p-1 w-6 h-6 shrink-0 transition-transform', isYearExpanded(item.year) ? 'rotate-90' : '']"
                 @click.stop="toggleYear(item.year)"
               />
-              <span class="sidebar-item-label">{{ formatDate(item.year, 1, 1, localeMsg.format.year) }}</span>
+              <span class="sidebar-item-label">{{ formatDate(item.year, 1, 1, 'year') }}</span>
               <span class="sidebar-item-count">{{ item.count.toLocaleString() }}</span>
             </div>
             <ul v-if="isYearExpanded(item.year)">
@@ -118,12 +119,14 @@ import { useI18n } from 'vue-i18n';
 import { fileInfoRevision } from '@/common/fileInfoRefresh';
 import { config, libConfig } from '@/common/config';
 import { getTakenDates } from '@/common/api';
+import { useLibraryChangeRefresh } from '@/composables/useLibraryChangeRefresh';
 import { formatDate } from '@/common/utils';
 import { SIDEBAR } from '@/common/constants';
 import { IconCalendarDay, IconRight } from '@/common/icons';
 
 import CalendarMonthly from '@/components/CalendarMonthly.vue';
 import CalendarDaily from '@/components/CalendarDaily.vue';
+import SortMenuButton from '@/components/SortMenuButton.vue';
 
 const props = defineProps({
   titlebar: String,
@@ -265,6 +268,7 @@ watch(() => [config.calendar.view, config.settings.calendarSort], () => {
 watch(fileInfoRevision, async () => {
   if (libConfig.activePane === 'main' && config.main.sidebarIndex === SIDEBAR.CALENDAR) await getCalendarDates(true);
 });
+useLibraryChangeRefresh(() => getCalendarDates(true));
 
 // Only refresh the active view. Inactive panel data is refreshed on re-entry.
 watch(() => [config.settings.calendarSort], async () => {

@@ -73,7 +73,7 @@
             class="absolute top-0 left-[68px] right-0 z-10 h-10 flex items-center"
             data-tauri-drag-region
           >
-            <ContextMenu :menuItems="libraryMenuItems">
+            <ContextMenu :menuItems="getLibraryMenuItems">
               <template #trigger="{ toggle }">
                 <button
                   class="p-2 flex items-center gap-1 border border-base-200 rounded-box text-base-content/70 hover:bg-base-100/30 hover:border-base-100/15 hover:text-base-content cursor-pointer transition-colors"
@@ -161,7 +161,7 @@
           <h2 class="text-lg font-medium">{{ $t('library.database_corrupted') }}</h2>
           <p class="text-sm text-base-content/60">{{ $t('library.database_corrupted_hint') }}</p>
         </div>
-        <Content v-else-if="databaseCorrupted === false" ref="contentRef" :key="libraryVersion" :titlebar="activeSidebarButton.text" :libraryEmpty="libraryEmpty"/>
+        <Content v-else-if="databaseCorrupted === false" ref="contentRef" :key="libraryVersion" :titlebar="activeSidebarButton.text" :libraryEmpty="libraryEmpty" @startup-ready="finishStartup"/>
       </div>
     </div>
 
@@ -182,37 +182,38 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onBeforeUnmount, onMounted, watch, nextTick } from 'vue';
+import { defineAsyncComponent, ref, computed, onBeforeUnmount, onMounted, watch, nextTick } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { emit, listen } from '@tauri-apps/api/event';
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { getName } from '@tauri-apps/api/app';
 import { invoke } from '@tauri-apps/api/core';
+import { applyAlbumAccess, recheckOfflineAlbums } from '@/common/albumRecovery';
 import { config, libConfig } from '@/common/config';
 import { useAppUpdater } from '@/common/updater';
 import { useUIStore } from '@/stores/uiStore';
 import { isWin, isMac, isLinux, SCALE_VALUES } from '@/common/utils';
 import { matchesShortcut, ShortcutPlatform } from '@/common/shortcuts';
-import { SIDEBAR } from '@/common/constants';
-import { getAppConfig, switchLibrary, cancelIndexing, cancelFaceIndex } from '@/common/api';
+import { SIDEBAR, SETTINGS_TAB, SETTINGS_BASE_WIDTH, SETTINGS_BASE_HEIGHT, PANEL_ANIMATION_MS } from '@/common/constants';
+import { getAppConfig, getLibraryVisibleCounts, switchLibrary, cancelIndexing, cancelFaceIndex } from '@/common/api';
 
 // vue components
 import Library from '@/components/Library.vue';
 import AlbumList from '@/components/AlbumList.vue';
-import SmartAlbumList from '@/components/SmartAlbumList.vue';
-import ImageSearch from '@/components/ImageSearch.vue';
-import Tag from '@/components/Tag.vue';
-import Calendar from '@/components/Calendar.vue';
-import Location from '@/components/Location.vue';
-import Person from '@/components/Person.vue';
-import Camera from '@/components/Camera.vue';
+const SmartAlbumList = defineAsyncComponent(() => import('@/components/SmartAlbumList.vue'));
+const ImageSearch = defineAsyncComponent(() => import('@/components/ImageSearch.vue'));
+const Tag = defineAsyncComponent(() => import('@/components/Tag.vue'));
+const Calendar = defineAsyncComponent(() => import('@/components/Calendar.vue'));
+const Location = defineAsyncComponent(() => import('@/components/Location.vue'));
+const Person = defineAsyncComponent(() => import('@/components/Person.vue'));
+const Camera = defineAsyncComponent(() => import('@/components/Camera.vue'));
 
 import TitleBar from '@/components/TitleBar.vue';
 import TButton from '@/components/TButton.vue';
 import Content from '@/components/Content.vue';
 import ContextMenu from '@/components/ContextMenu.vue';
 import CollectionTray from '@/components/CollectionTray.vue';
-import ManageLibraries from '@/components/ManageLibraries.vue';
+const ManageLibraries = defineAsyncComponent(() => import('@/components/ManageLibraries.vue'));
 import iconLogo from '@/assets/images/icon.png';
 
 import {
@@ -263,8 +264,6 @@ const checkLibraryEmpty = async () => {
     libraryEmpty.value = false;
   }
 };
-const SETTINGS_BASE_WIDTH = 600;
-const SETTINGS_BASE_HEIGHT = 620;
 
 /// i18n
 const { locale, messages } = useI18n();
@@ -280,7 +279,7 @@ const showPanel = computed({
   get: () => config.leftPanel.show,
   set: (value: boolean) => { config.leftPanel.show = value; },
 });
-const LEFT_PANEL_ANIMATION_MS = 200;
+
 const leftPanelMounted = ref(showPanel.value);
 const leftPanelVisualExpanded = ref(showPanel.value);
 const leftPanelLayoutExpanded = ref(showPanel.value);
@@ -313,7 +312,7 @@ watch(showPanel, async (expanded) => {
       if (animationVersion !== leftPanelAnimationVersion) return;
       leftPanelAnimationTimer = null;
       void commitLeftPanelLayout(true);
-    }, LEFT_PANEL_ANIMATION_MS);
+    }, PANEL_ANIMATION_MS);
     return;
   }
 
@@ -325,7 +324,7 @@ watch(showPanel, async (expanded) => {
       if (animationVersion !== leftPanelAnimationVersion) return;
       leftPanelMounted.value = false;
     });
-  }, LEFT_PANEL_ANIMATION_MS);
+  }, PANEL_ANIMATION_MS);
 });
 
 // Library state
@@ -361,6 +360,8 @@ let unlistenOpenAbout: (() => void) | null = null;
 let unlistenAlbumsRefreshed: (() => void) | null = null;
 let unlistenAddAlbumRequested: (() => void) | null = null;
 let unlistenEditAlbumRequested: (() => void) | null = null;
+// Native Edit menu "Select All" routes to the photo selection via the backend event.
+let unlistenMenuSelectAll: (() => void) | null = null;
 const shortcutPlatform: ShortcutPlatform = isMac ? 'mac' : (isLinux ? 'linux' : 'windows');
 const {
   updateAvailable,
@@ -413,6 +414,19 @@ watch(() => config.libraryChangedVersion, async () => {
   appConfig.value = await getAppConfig();
 });
 
+const libraryFileCounts = ref<Record<string, number | null>>({});
+let libraryCountsRefreshing = false;
+function getLibraryMenuItems() {
+  if (!libraryCountsRefreshing) {
+    libraryCountsRefreshing = true;
+    void Promise.all((appConfig.value?.libraries || []).filter(lib => !lib.hidden).map(async lib => {
+      const counts = await getLibraryVisibleCounts(lib.id);
+      libraryFileCounts.value[lib.id] = counts?.all ?? null;
+    })).finally(() => { libraryCountsRefreshing = false; });
+  }
+  return libraryMenuItems.value;
+}
+
 const libraryMenuItems = computed(() => {
   const items: any[] = [];
   
@@ -423,6 +437,11 @@ const libraryMenuItems = computed(() => {
       const isSelected = lib.id === appConfig.value.current_library_id;
       items.push({
         label: lib.name,
+        // ContextMenu snapshots items on open; a getter keeps its badge reactive.
+        get count() {
+          const count = libraryFileCounts.value[lib.id];
+          return count === 0 ? undefined : count === null ? '—' : count?.toLocaleString(locale.value) ?? '…';
+        },
         icon: isSelected ? IconDot : null,
         action: () => {
           if (!isSelected) {
@@ -446,6 +465,23 @@ const libraryMenuItems = computed(() => {
   return items;
 });
 
+let startupFinished = false;
+function handleAccessRecovery() {
+  if (isSwitchingLibrary.value || databaseCorrupted.value !== false) return;
+  void recheckOfflineAlbums();
+}
+
+async function finishStartup() {
+  if (startupFinished) return;
+  startupFinished = true;
+  uiStore.startupReady = true;
+  performance.mark('startup-first-content-ready');
+  void invoke('finish_startup', { model: config.settings.imageSearch.model || 0 }).catch(console.error);
+  if (config.settings.autoCheckUpdates !== false) void checkForUpdates(false);
+}
+watch(databaseCorrupted, corrupted => {
+  if (corrupted) void nextTick(() => requestAnimationFrame(() => requestAnimationFrame(() => finishStartup())));
+});
 
 onMounted(async () => {
   window.addEventListener('keydown', handleHomeKeyDown);
@@ -453,7 +489,10 @@ onMounted(async () => {
     void clickSettings();
   });
   unlistenOpenAbout = await listen('app-open-about', () => {
-    void clickSettings(7);
+    void clickSettings(SETTINGS_TAB.ABOUT);
+  });
+  unlistenMenuSelectAll = await listen('menu-select-all', () => {
+    contentRef.value?.selectAll?.();
   });
 
   appConfig.value = await getAppConfig();
@@ -475,9 +514,17 @@ onMounted(async () => {
     (panelRef.value as any)?.openAlbumEdit?.(albumId);
   });
 
-  unlistenAlbumsRefreshed = await listen('albums-refreshed', () => {
+  unlistenAlbumsRefreshed = await listen('albums-refreshed', async (event: any) => {
+    const libraryId = event.payload?.libraryId || libConfig._libraryId;
+    if (libraryId !== libConfig._libraryId) return;
+    for (const album of event.payload?.albums || []) {
+      if (typeof album.is_accessible === 'boolean') {
+        await applyAlbumAccess(album, album.is_accessible, libraryId);
+      }
+    }
     void checkLibraryEmpty();
   });
+  window.addEventListener('focus', handleAccessRecovery);
 
   try {
     const name = await getName();
@@ -486,18 +533,18 @@ onMounted(async () => {
     console.error('Failed to get app name:', e);
   }
 
-  if (config.settings.autoCheckUpdates !== false) {
-    void checkForUpdates(false);
-  }
 });
 
 onBeforeUnmount(() => {
+  window.removeEventListener('focus', handleAccessRecovery);
   clearLeftPanelAnimationTimer();
   window.removeEventListener('keydown', handleHomeKeyDown);
   document.removeEventListener('mousemove', handleCollectionMouseMove);
   document.removeEventListener('mouseup', stopDraggingCollectionSplitter);
   unlistenOpenPreferences?.();
   unlistenOpenPreferences = null;
+  unlistenMenuSelectAll?.();
+  unlistenMenuSelectAll = null;
   unlistenOpenAbout?.();
   unlistenOpenAbout = null;
   unlistenAlbumsRefreshed?.();

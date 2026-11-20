@@ -1,28 +1,22 @@
-import { createApp } from 'vue'
-import { createI18n } from 'vue-i18n'
+import { createApp, watch } from 'vue'
+import { i18n, initializeLanguage, resolveSystemLanguage } from '@/common/i18n'
+import { locale as getSystemLanguage } from '@tauri-apps/plugin-os'
 import { createPinia } from 'pinia'
 import piniaPersistedState from 'pinia-plugin-persistedstate'
 import { emit, listen } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
+import { message } from '@tauri-apps/plugin-dialog'
+import { initializeOriginalMedia } from '@/common/utils'
+import { getSystemRegionLocale } from '@/common/api'
 import 'cally'
 import router from '@/common/router'
 import App from '@/App.vue'
+import { normalizeStatusBarFields } from '@/common/statusBarFields'
 import { useConfigStore } from '@/stores/configStore'
 import '@/assets/app.css'
 
-// I18n
-import en from '@/locales/en.json'
-import zh from '@/locales/zh.json'
-import es from '@/locales/es.json'
-import fr from '@/locales/fr.json'
-import de from '@/locales/de.json'
-import ja from '@/locales/ja.json'
-import ko from '@/locales/ko.json'
-import ru from '@/locales/ru.json'
-import pt from '@/locales/pt.json'
-import pl from '@/locales/pl.json'
-import nl from '@/locales/nl.json'
+performance.mark('startup-frontend-started')
 
 // Create the app instance
 const app = createApp(App)
@@ -35,41 +29,89 @@ const config = useConfigStore() // Use the config store
 const currentWindowLabel = getCurrentWebviewWindow().label
 const isMainWindow = currentWindowLabel === 'main'
 const isSettingsWindow = currentWindowLabel === 'settings'
+let settingsSyncRequest = 0
+const originalMediaReady = initializeOriginalMedia().then(() => true, error => {
+  console.error(error)
+  return false
+})
+
+listen('status-bar-fields-changed', ({ payload }) => {
+  const fields = normalizeStatusBarFields(payload)
+  if (JSON.stringify(config.settings.statusBarFields) !== JSON.stringify(fields)) {
+    config.settings.statusBarFields = fields
+  }
+})
+
+listen('montage-config-changed', (event) => {
+  // Keep other windows current so their later writes preserve collage preferences.
+  if (currentWindowLabel !== 'montage') {
+    Object.assign(config.montage, event.payload)
+  }
+})
+
+listen('image-editor-config-changed', (event) => {
+  // Keep other windows current so their later writes preserve editor preferences.
+  if (currentWindowLabel !== 'imageeditor') {
+    Object.assign(config.imageEditor, event.payload)
+  }
+})
+
+listen('dedup-config-changed', (event) => {
+  // Keep other windows current so their later writes preserve dedup keep rules.
+  if (currentWindowLabel !== 'main') {
+    Object.assign(config.dedup, event.payload)
+  }
+})
+
+listen('af-area-display-changed', (event) => {
+  // All open windows keep the same preference so later store writes preserve it.
+  if (typeof event.payload === 'boolean' && config.mediaViewer.showAfAreas !== event.payload) {
+    config.mediaViewer.showAfAreas = event.payload
+  }
+})
+
+// Resolve Regional Format before components first render dates.
+await getSystemRegionLocale().then((loc) => config.setSystemLocale(loc)).catch(() => {})
 
 if (isMainWindow) {
   config.$subscribe((_mutation, state) => {
     void emit('config-settings-synced', JSON.parse(JSON.stringify(state.settings)))
   })
+  watch(() => config.dedup.keepRules, () => {
+    void emit('dedup-config-changed', JSON.parse(JSON.stringify(config.dedup)))
+  }, { deep: true })
 } else {
-  listen('config-settings-synced', (event) => {
+  listen('config-settings-synced', async (event) => {
+    const request = ++settingsSyncRequest
     if (isSettingsWindow) {
-      // Settings also needs language updates made from the welcome screen.
+      // Keep shared preferences in sync while preserving other edits in Settings.
+      if (event.payload.fileDeleteBehavior === 'trash' || event.payload.fileDeleteBehavior === 'permanent') {
+        config.settings.fileDeleteBehavior = event.payload.fileDeleteBehavior
+      }
       config.setLanguage(event.payload.language)
     } else {
-      Object.assign(config.settings, event.payload)
+      const { language, ...settings } = event.payload
+      await config.setLanguage(language)
+      if (request !== settingsSyncRequest) return
+      Object.assign(config.settings, settings)
     }
   })
 }
 
-// Create the I18n instance
-const i18n = createI18n({
-  legacy: false, // Disable legacy mode
-  locale: config.settings.language, // Use language setting from config store
-  fallbackLocale: "en",
-  messages: {
-    en,
-    zh,
-    es,
-    fr,
-    de,
-    ja,
-    ko,
-    ru,
-    pt,
-    pl,
-    nl
-  },
-})
+// Load only the active language and English before components read messages.
+if (!config.settings.languageInitialized) {
+  const systemLanguage = await getSystemLanguage().catch(() => null)
+  if (!config.settings.languageInitialized) config.settings.language = resolveSystemLanguage(systemLanguage)
+}
+const initialLanguage = config.settings.language
+const loadedLanguage = await initializeLanguage(initialLanguage)
+if (config.settings.language === initialLanguage) {
+  config.settings.language = loadedLanguage
+  config.settings.languageInitialized = true
+}
+else i18n.global.locale.value = config.settings.language
+performance.mark('startup-language-ready')
+if (isMainWindow) void invoke('record_startup_stage', { stage: 'language-ready' }).catch(console.error)
 
 // Set up global properties
 app.config.globalProperties.$invoke = invoke
@@ -79,7 +121,13 @@ app.use(router)
 app.use(i18n)
 
 // Mount the app
+const originalMediaAvailable = await originalMediaReady
 app.mount('#app')
+if (!originalMediaAvailable && isMainWindow) {
+  void message(i18n.global.t('image_viewer.media_server_unavailable'), { title: 'Lap', kind: 'error' }).catch(console.error)
+}
+performance.mark('startup-app-mounted')
+if (isMainWindow) void invoke('record_startup_stage', { stage: 'app-mounted' }).catch(console.error)
 
 // Listen for events
 if (isMainWindow) {
@@ -99,7 +147,12 @@ if (isMainWindow) {
     config.setExternalApps(event.payload)
   })
   listen('settings-language-changed', (event) => {
-    config.setLanguage(event.payload)
+    config.setLanguage(event.payload, { fromUser: true })
+  })
+  listen('settings-fileDeleteBehavior-changed', (event) => {
+    if (event.payload === 'trash' || event.payload === 'permanent') {
+      config.settings.fileDeleteBehavior = event.payload
+    }
   })
   listen('settings-showToolTip-changed', (event) => {
     config.setShowToolTip(event.payload)
@@ -119,11 +172,8 @@ if (isMainWindow) {
   listen('settings-folderSort-changed', (event) => {
     config.setFolderSort(event.payload)
   })
-  listen('settings-calendarSort-changed', (event) => {
-    config.setCalendarSort(event.payload)
-  })
-  listen('settings-categorySort-changed', (event) => {
-    config.setCategorySort(event.payload)
+  listen('settings-dateTimeFormat-changed', (event) => {
+    config.setDateTimeFormat(event.payload)
   })
   listen('settings-showSubfolderFiles-changed', (event) => {
     config.setShowSubfolderFiles(event.payload)
@@ -131,8 +181,11 @@ if (isMainWindow) {
   listen('settings-thumbnailSize-changed', (event) => {
     config.setThumbnailSize(event.payload)
   })
-  listen('settings-rawThumbnailSource-changed', (event) => {
-    config.setRawThumbnailSource(event.payload)
+  listen('settings-rawPairDisplaySource-changed', (event) => {
+    config.setRawPairDisplaySource(event.payload)
+  })
+  listen('settings-rawPreviewSource-changed', (event) => {
+    config.setRawPreviewSource(event.payload)
   })
   listen('settings-mapProvider-changed', (event) => {
     config.setMapProvider(event.payload)
@@ -184,6 +237,9 @@ if (isMainWindow) {
   })
   listen('settings-navigatorViewSize-changed', (event) => {
     config.setNavigatorViewSize(event.payload)
+  })
+  listen('settings-navigatorSharpnessGrid-changed', (event) => {
+    config.settings.navigatorSharpnessGrid = event.payload
   })
   listen('settings-viewBackground-changed', (event) => {
     config.setViewBackground(event.payload)

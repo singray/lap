@@ -1,219 +1,169 @@
 <template>
-  <ModalDialog :title="$t('tag.edit_tag')" :width="500" :position-key="positionKey" @cancel="clickCancel">
+  <ModalDialog
+    :title="
+      $t('tag.edit_tag') +
+      (allTags.length ? ` (${allTags.length.toLocaleString()})` : '')
+    "
+    :width="500"
+    :position-key="positionKey"
+    @cancel="clickCancel"
+  >
+    <template #title-actions
+      ><button
+        class="t-button-default btn-outline gap-1.5 cursor-pointer"
+        :disabled="!canEditTags"
+        @click="edit()"
+      >
+        <IconAdd class="size-4" />{{ $t("msgbox.new_tag.title") }}
+      </button></template
+    >
     <section class="space-y-3">
-      <div class="flex items-center gap-2">
-        <div
-          :class="[
-            'grow h-8 flex items-center rounded-box overflow-hidden transition-colors bg-base-100',
-            isSearchFocused
-              ? 'border-2 border-primary'
-              : 'border border-neutral-content/30 hover:border-neutral-content/70',
-          ]"
+      <div
+        class="flex items-center rounded-box border border-base-content/20 bg-base-100"
+      >
+        <IconSearch class="ml-2 size-4 text-base-content/40" />
+        <input
+          ref="tagSearchInputRef"
+          v-model="tagSearch"
+          class="w-full min-w-0 px-2 py-1 bg-transparent text-sm focus:outline-none"
+          :placeholder="$t('menu.tag.search')"
+        />
+        <button
+          v-if="tagSearch"
+          class="p-1 text-base-content/40"
+          @click="tagSearch = ''"
         >
-          <IconSearch class="ml-2 w-4 h-4 text-base-content/70" />
+          <IconClose class="size-4" />
+        </button>
+        <button type="button" class="p-1 mr-1 shrink-0 cursor-pointer"
+          :class="showSelectedOnly ? 'text-primary' : 'text-base-content/40 hover:text-base-content'"
+          :title="$t('tag.show_selected_only')" :aria-label="$t('tag.show_selected_only')"
+          :aria-pressed="showSelectedOnly" @click="showSelectedOnly = !showSelectedOnly">
+          <IconTag class="size-4" />
+        </button>
+      </div>
+      <div
+        ref="tagListContainer"
+        class="relative rounded-box p-2 bg-base-100/30 border border-base-content/10"
+        :style="{ height: `min(50vh, max(192px, ${tagContentHeight + 18}px))` }"
+        role="tree"
+        :aria-busy="isLoadingCatalog || isLoadingTags"
+      >
+        <VirtualScroll ref="tagScroller" :items="filteredTags" :item-size="TAG_ROW_HEIGHT"
+          :geometry="tagGeometry" :content-height="tagContentHeight" :pinned-index="editorTagIndex">
+        <template #default="{ item: tag, index }">
+        <div
+          :key="tag.id"
+          :id="`dialog-tag-${tag.id}`"
+          role="treeitem"
+          :aria-level="tag.depth + 1"
+          :aria-expanded="
+            tag.hasChildren ? !collapsed.includes(tag.id) : undefined
+          "
+          class="group h-full flex items-center py-2 pl-1 pr-1 rounded-box hover:bg-base-content/5 cursor-pointer select-none"
+          :class="{
+            'text-primary': selectedTags.has(tag.id),
+            'ring-2 ring-primary': focusedTagIndex === index,
+          }"
+          @click="toggleTag(tag.id)"
+        >
           <input
-            ref="tagSearchInputRef"
-            type="text"
-            v-model="tagSearch"
-            :placeholder="$t('menu.tag.search')"
-            class="w-full bg-transparent border-none focus:ring-0 px-2 text-sm placeholder-base-content/30 focus:outline-none"
-            @focus="onSearchFocus"
-            @blur="onSearchBlur"
+            type="checkbox"
+            class="checkbox checkbox-xs mx-1 shrink-0"
+            :class="{ 'checkbox-primary': selectedTags.has(tag.id) || intermediateTags.has(tag.id) }"
+            :disabled="!canEditTags || !!editor"
+            :checked="selectedTags.has(tag.id)"
+            :indeterminate="intermediateTags.has(tag.id)"
+            @click.stop
+            @change="toggleTag(tag.id)"
           />
+          <div class="flex items-center flex-1 min-w-0" :style="{ paddingLeft: `${tag.depth * 16}px` }">
           <button
-            v-if="tagSearch"
-            type="button"
-            class="mr-1 p-1 rounded-box text-base-content/30 hover:text-base-content/70"
-            @click="
-              tagSearch = '';
-              tagSearchInputRef?.focus();
-            "
+            v-if="tag.hasChildren"
+            class="size-5 shrink-0 flex items-center justify-center cursor-pointer"
+            @click.stop="toggleBranch(tag.id)"
           >
-            <IconClose class="w-4 h-4" />
+            <IconRight
+              class="size-5 p-0.5"
+              :class="{ 'rotate-90': !collapsed.includes(tag.id) || tagSearch }"
+            />
           </button>
+          <span v-else class="size-5 shrink-0" aria-hidden="true" />
+          <TagNameInput
+            v-if="editor && tag.id === (editor.id ?? -1)"
+            :key="tag.id"
+            :initial-name="editor.name"
+            :saving="isCreatingTag"
+            :error="error"
+            compact
+            class="select-text"
+            @save="saveEditor"
+            @cancel="cancelEditor"
+            @clear-error="error = ''"
+          />
+          <span v-else class="min-w-0 flex-1 truncate">{{
+            tagSearch && !showSelectedOnly ? tag.path : tag.name
+          }}</span>
+          </div>
+          <div
+            v-if="!editor"
+            class="hidden group-hover:flex shrink-0"
+            @click.stop
+          >
+            <button
+              class="p-1 text-base-content/40 hover:text-primary cursor-pointer"
+              :disabled="!canEditTags"
+              :title="$t('tag.add_child')"
+              @click="edit(undefined, tag.id)"
+            >
+              <IconTagAdd class="size-4" />
+            </button>
+            <button
+              class="p-1 text-base-content/40 hover:text-base-content cursor-pointer"
+              :disabled="!canEditTags"
+              :title="$t('menu.tag.rename')"
+              @click="edit(tag)"
+            >
+              <IconRename class="size-4" />
+            </button>
+            <button
+              class="p-1 text-base-content/40 hover:text-error cursor-pointer"
+              :disabled="!canEditTags"
+              :title="$t('tag.delete_tag')"
+              @click="prepareDelete(tag)"
+            >
+              <IconTrash class="size-4" />
+            </button>
+          </div>
+        </div>
+        </template>
+        </VirtualScroll>
+        <div v-if="isLoadingCatalog || isLoadingTags" class="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <span class="loading loading-spinner loading-sm" :aria-label="$t('tooltip.loading')" />
+        </div>
+        <div
+          v-if="!filteredTags.length && !isLoadingCatalog"
+          class="absolute inset-0 flex items-center justify-center text-base-content/40 pointer-events-none"
+        >
+          {{ $t(showSelectedOnly ? "tag.no_selected_tags" : "tag.not_found") }}
         </div>
       </div>
-      <div
-        v-if="allTags.length"
-        class="text-xs uppercase tracking-widest font-bold text-base-content/30 select-none"
-      >
-        {{ $t("tag.title") }} ({{ allTags.length }})
-      </div>
-      <div
-        class="min-h-48 max-h-[50vh] overflow-y-auto rounded-box p-2 bg-base-100/30 border border-base-content/10 flex"
-        :class="visibleGroups.length === 0 ? 'items-center justify-center' : ''"
-      >
-        <div v-if="visibleGroups.length > 0" class="w-full">
-          <template v-for="group in visibleGroups" :key="group.id">
-            <div class="group/header flex items-center pr-1 rounded-box hover:bg-base-content/5">
-              <button
-                type="button"
-                class="sidebar-item min-w-0 flex-1 select-none"
-                :aria-expanded="expanded(group.id)"
-                @keydown.enter.stop.prevent="toggleGroup(group.id)"
-                @keydown.space.stop.prevent="toggleGroup(group.id)"
-              >
-                <IconRight
-                  class="p-1 w-6 h-6 shrink-0 transition-transform"
-                  :class="expanded(group.id) ? 'rotate-90' : ''"
-                  @click="toggleGroup(group.id)"
-                />
-                <span class="sidebar-item-label text-left font-medium">{{ group.name }}</span>
-              </button>
-              <div class="relative grid min-w-8 h-8 shrink-0 place-items-center">
-                <span class="sidebar-item-count px-1 tabular-nums group-hover/header:invisible group-focus-within/header:invisible">{{ group.tags.length.toLocaleString() }}</span>
-                <button
-                  type="button"
-                  class="absolute inset-0 flex items-center justify-center rounded-box text-base-content/40 hover:text-primary hover:bg-primary/10 opacity-0 group-hover/header:opacity-100 group-focus-within/header:opacity-100 focus:opacity-100 transition-opacity disabled:cursor-not-allowed"
-                  :title="$t('msgbox.new_tag.title')"
-                  :aria-label="$t('msgbox.new_tag.title')"
-                  :disabled="!canEditTags || isCreatingTag"
-                  @click.stop="startNewTag(group.id)"
-                  @dblclick.stop
-                >
-                  <IconAdd class="w-4 h-4 cursor-pointer" />
-                </button>
-              </div>
-            </div>
-            <template v-if="expanded(group.id)">
-              <div v-if="newTagGroupId === group.id" class="pl-14 py-1">
-                <div class="flex items-center gap-2 text-primary">
-                  <IconTag class="w-4 h-4 shrink-0" />
-                  <input
-                    :ref="(el) => { newTagNameInputRef = el as HTMLInputElement | null; }"
-                    v-model="newTagName"
-                    type="text"
-                    maxlength="255"
-                    class="input input-sm px-2 min-w-0 flex-1 text-sm"
-                    :aria-label="$t('msgbox.new_tag.title')"
-                    :readonly="isCreatingTag"
-                    @click.stop
-                    @keydown.stop
-                    @keydown.enter.prevent="!$event.isComposing && addNewTag()"
-                    @keydown.escape.prevent="cancelNewTag"
-                    @blur="onNewTagBlur"
-                    @input="newTagNameEdited = true"
-                  />
-                </div>
-                <p v-if="duplicateTag" class="mt-2 text-xs text-base-content/60" role="status">
-                  {{ $t("menu.tag.exists_in", { group: duplicateTag.group_name }) }}
-                  <button type="button" class="text-primary hover:underline" @click="locateDuplicate">
-                    {{ $t("menu.tag.locate") }}
-                  </button>
-                </p>
-              </div>
-              <div
-                v-for="tag in group.tags"
-                :id="`dialog-tag-${tag.id}`"
-                :key="tag.id"
-                :class="[
-                  'group w-full pl-8 p-2 flex items-center gap-2 rounded-box text-left cursor-pointer transition-colors',
-                  {
-                    'text-primary': selectedTags.has(tag.id),
-                    'bg-base-content/5':
-                      intermediateTags.has(tag.id) && !selectedTags.has(tag.id),
-                    'hover:bg-base-content/5':
-                      !selectedTags.has(tag.id) &&
-                      !intermediateTags.has(tag.id),
-                    'ring-2 ring-primary ring-offset-1 ring-offset-base-100':
-                      filteredTags[focusedTagIndex]?.id === tag.id,
-                  },
-                ]"
-                @click="toggleTag(tag.id)"
-              >
-                <label
-                  class="flex items-center cursor-pointer shrink-0"
-                  @click.stop
-                  @dblclick.stop
-                >
-                  <input
-                    type="checkbox"
-                    class="checkbox checkbox-xs"
-                    :class="
-                      selectedTags.has(tag.id)
-                        ? 'checkbox-primary opacity-70'
-                        : ''
-                    "
-                    :disabled="!canEditTags"
-                    :checked="selectedTags.has(tag.id)"
-                    :indeterminate="intermediateTags.has(tag.id)"
-                    @change="toggleTag(tag.id)"
-                  />
-                </label>
-                <IconTag class="w-4 h-4 shrink-0" />
-                <input
-                  v-if="renamingId === Number(tag.id)"
-                  ref="renameInput"
-                  v-model="renameValue"
-                  class="input px-1 min-w-0 flex-1 text-sm"
-                  maxlength="255"
-                  @click.stop
-                  @keydown.stop
-                  @keydown.enter.prevent="commitRename(tag)"
-                  @keydown.escape.prevent="cancelRename"
-                  @blur="commitRename(tag)"
-                />
-                <span v-else class="min-w-0 flex-1 truncate">{{
-                  tag.name
-                }}</span>
-                <span
-                  v-if="
-                    renamingId !== Number(tag.id) && Number(tag.count || 0) > 0
-                  "
-                  class="sidebar-item-count shrink-0 group-hover:hidden"
-                  >{{ Number(tag.count || 0).toLocaleString() }}</span
-                >
-                <div
-                  v-if="renamingId !== Number(tag.id)"
-                  class="shrink-0 hidden group-hover:flex"
-                >
-                  <button
-                    type="button"
-                    class="p-1 text-base-content/40 hover:text-base-content cursor-pointer"
-                    :title="$t('menu.tag.rename')"
-                    @click.stop="startRename(tag)"
-                  >
-                    <IconEdit class="w-4 h-4" />
-                  </button>
-                  <button
-                    type="button"
-                    class="p-1 text-base-content/40 hover:text-error cursor-pointer"
-                    :title="$t('tag.delete_tag')"
-                    @click.stop="deleteTarget = tag"
-                  >
-                    <IconTrash class="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-              <div
-                v-if="!group.tags.length && newTagGroupId !== group.id"
-                class="pl-8 py-2 text-xs text-base-content/40"
-              >
-                {{ $t("menu.tag.empty") }}
-              </div>
-            </template>
-          </template>
-        </div>
-        <span v-else class="text-base-content/30">{{
-          $t("tag.not_found")
-        }}</span>
-      </div>
-      <div v-if="tagLoadFailed" class="text-sm text-error">
+      <p v-if="editor && error" role="alert" class="text-xs text-error">{{ error }}</p>
+      <p v-if="tagLoadFailed" class="text-sm text-error">
         {{ $t("tag.load_failed") }}
-      </div>
+      </p>
     </section>
-
-    <!-- cancel and OK buttons -->
-    <div class="mt-4 flex justify-end space-x-4">
-      <button class="t-button-default" @click="clickCancel">
+    <div class="mt-4 flex justify-end gap-4">
+      <button
+        class="t-button-default"
+        :disabled="isApplyingTags"
+        @click="clickCancel"
+      >
         {{ $t("msgbox.cancel") }}
       </button>
-
       <button
         class="t-button-primary"
-        :disabled="
-          isLoadingTags || isLoadingCatalog || isApplyingTags || tagLoadFailed || isCreatingTag || newTagGroupId !== null
-        "
+        :disabled="!canEditTags || editor !== null"
         @click="clickOk"
       >
         {{ $t("msgbox.ok") }}
@@ -222,11 +172,12 @@
   </ModalDialog>
   <MessageBox
     v-if="deleteTarget"
-    :title="$t('msgbox.delete_tag.title')"
-    :message="$t('msgbox.delete_tag.content', { tag: deleteTarget.name })"
+    :title="$t('msgbox.delete_tag.title', { tag: deleteTarget.name })"
+    :message="$t('tag.delete_tree')"
+    :warningOk="true"
+    :isLoading="isCreatingTag"
     :OkText="$t('msgbox.delete_tag.ok')"
     :cancelText="$t('msgbox.cancel')"
-    :warningOk="true"
     @ok="confirmDelete"
     @cancel="deleteTarget = null"
   />
@@ -246,172 +197,249 @@ import { useI18n } from "vue-i18n";
 import { useToast } from "@/common/toast";
 import {
   getAllTags,
-  getTagGroups,
   createTag,
   getTagSelectionCounts,
   applyTagsToFiles,
   deleteTag,
   renameTag,
+  getTagSubtreeInfo,
 } from "@/common/api";
 import {
   IconAdd,
+  IconTagAdd,
   IconClose,
-  IconEdit,
+  IconRename,
   IconSearch,
   IconTag,
   IconTrash,
   IconRight,
 } from "@/common/icons";
-import { groupTags, type TagGroup } from "@/common/tagGroups";
-import MessageBox from "./MessageBox.vue";
+import {
+  tagRows,
+  ancestorIds,
+  subtreeIds,
+  isValidTagName,
+  type LibraryTag,
+} from "@/common/tagTree";
 import { libConfig } from "@/common/config";
 import { useUIStore } from "@/stores/uiStore";
-import ModalDialog from "@/components/ModalDialog.vue";
+import MessageBox from "./MessageBox.vue";
+import TagNameInput from "./TagNameInput.vue";
+import ModalDialog from "./ModalDialog.vue";
+import VirtualScroll from "./VirtualScroll.vue";
 
 const props = defineProps({
-  fileIds: {
-    type: Array as () => number[],
-    default: () => [],
-  },
-  // Optional key for persisting dialog position across sessions.
-  positionKey: {
-    type: String,
-    default: '',
-  },
+  fileIds: { type: Array as () => number[], default: () => [] },
+  positionKey: { type: String, default: "" },
 });
-
 const emit = defineEmits(["ok", "cancel", "states-changed"]);
 const uiStore = useUIStore();
 const toast = useToast();
 const { t } = useI18n();
-
-const allTags = ref<any[]>([]);
-const tagSearchInputRef = ref<HTMLInputElement | null>(null);
-const newTagNameInputRef = ref<HTMLInputElement | null>(null);
+const allTags = ref<LibraryTag[]>([]);
 const tagSearch = ref("");
-const newTagName = ref("");
-const newTagNameEdited = ref(false);
-const isSearchFocused = ref(false);
-const isCreatingTag = ref(false);
-const focusedTagIndex = ref(-1); // -1 = no tag focused
-const isInTagList = ref(false); // true = keyboard focus is in tag list
+const showSelectedOnly = ref(false);
+const tagSearchInputRef = ref<HTMLInputElement | null>(null);
+const collapsed = ref<number[]>([]);
+const focusedTagIndex = ref(-1);
 const isLoadingTags = ref(true);
 const isLoadingCatalog = ref(true);
 const isApplyingTags = ref(false);
+const isCreatingTag = ref(false);
 const catalogLoadFailed = ref(false);
 const selectionLoadFailed = ref(false);
-const tagLoadFailed = computed(() => catalogLoadFailed.value || selectionLoadFailed.value);
-const canEditTags = computed(() =>
-  !isLoadingCatalog.value && !isLoadingTags.value && !isApplyingTags.value && !tagLoadFailed.value,
+const tagLoadFailed = computed(
+  () => catalogLoadFailed.value || selectionLoadFailed.value,
 );
-const renamingId = ref<number | null>(null);
-const renameValue = ref("");
-const renameInput = ref<HTMLInputElement | HTMLInputElement[] | null>(null);
-const deleteTarget = ref<any | null>(null);
-
-// Sets to track tag states
-const selectedTags = ref<Set<number>>(new Set()); // Tags present on ALL selected files
-const intermediateTags = ref<Set<number>>(new Set()); // Tags present on SOME selected files
+const canEditTags = computed(
+  () =>
+    !isLoadingTags.value &&
+    !isLoadingCatalog.value &&
+    !isApplyingTags.value &&
+    !isCreatingTag.value &&
+    !tagLoadFailed.value,
+);
+const selectedTags = ref<Set<number>>(new Set());
+const intermediateTags = ref<Set<number>>(new Set());
 const initialSelectedTags = ref<Set<number>>(new Set());
 const initialIntermediateTags = ref<Set<number>>(new Set());
 const tagChanges = ref<Map<number, "add" | "remove">>(new Map());
-
-const groups = ref<TagGroup[]>([]);
-const newTagGroupId = ref<number | null>(null);
-const collapsed = ref<number[]>([]);
-const duplicateTag = ref<any>(null);
-const visibleGroups = computed(() =>
-  groupTags(groups.value, allTags.value, newTagGroupId.value !== null ? "" : tagSearch.value),
-);
-const expanded = (id: number) =>
-  newTagGroupId.value === id || !!tagSearch.value.trim() || !collapsed.value.includes(id);
-function toggleGroup(id: number) {
-  if (tagSearch.value.trim() || newTagGroupId.value === id) return;
-  collapsed.value = expanded(id)
-    ? [...collapsed.value, id]
-    : collapsed.value.filter((value) => value !== id);
+const filteredTags = computed(() => {
+  let tags = editor.value?.id === null
+    ? [...allTags.value, { id: -1, name: editor.value.name, parent_id: editor.value.parent, path: editor.value.name }]
+    : allTags.value;
+  if (showSelectedOnly.value) {
+    const byId = new Map(tags.map(tag => [tag.id, tag]));
+    const included = new Set<number>();
+    const selected = new Set([...selectedTags.value, ...intermediateTags.value]);
+    if (editor.value) selected.add(editor.value.id ?? -1);
+    for (const id of selected) {
+      let tag = byId.get(id);
+      while (tag && !included.has(tag.id)) {
+        included.add(tag.id);
+        tag = tag.parent_id == null ? undefined : byId.get(tag.parent_id);
+      }
+    }
+    tags = tags.filter(tag => included.has(tag.id));
+  }
+  return tagRows(tags, tagSearch.value, collapsed.value, 0, -1);
+});
+const editor = ref<{
+  id: number | null;
+  name: string;
+  parent: number | null;
+} | null>(null);
+const TAG_ROW_HEIGHT = 40;
+const tagListContainer = ref<HTMLElement | null>(null);
+const tagScroller = ref<InstanceType<typeof VirtualScroll> | null>(null);
+const tagListWidth = ref(0);
+const tagGeometry = computed(() => {
+  let y = 0;
+  return filteredTags.value.map(tag => {
+    const height = TAG_ROW_HEIGHT;
+    const box = { x: 0, y, width: tagListWidth.value, height };
+    y += height;
+    return box;
+  });
+});
+const tagContentHeight = computed(() => {
+  const last = tagGeometry.value.at(-1);
+  return last ? last.y + last.height : 0;
+});
+function scrollToTag(index: number) {
+  const box = tagGeometry.value[index];
+  const viewport = tagScroller.value?.$el as HTMLElement | undefined;
+  if (!box || !viewport) return;
+  if (box.y < viewport.scrollTop) tagScroller.value?.scrollToPosition(box.y);
+  else if (box.y + box.height > viewport.scrollTop + viewport.clientHeight)
+    tagScroller.value?.scrollToPosition(box.y + box.height - viewport.clientHeight);
 }
-const filteredTags = computed(() =>
-  visibleGroups.value.flatMap((group) =>
-    expanded(group.id) ? group.tags : [],
-  ),
-);
-async function locateDuplicate() {
-  const tag = duplicateTag.value;
-  if (!tag) return;
-  cancelNewTag();
-  tagSearch.value = "";
-  collapsed.value = collapsed.value.filter((id) => id !== tag.group_id);
+const editorTagIndex = computed(() => editor.value
+  ? filteredTags.value.findIndex(tag => tag.id === (editor.value!.id ?? -1))
+  : -1);
+let tagListObserver: ResizeObserver | undefined;
+watch(filteredTags, async (rows, previous) => {
+  const focusedId = previous?.[focusedTagIndex.value]?.id;
+  focusedTagIndex.value = focusedId == null ? -1 : rows.findIndex(tag => tag.id === focusedId);
   await nextTick();
-  document
-    .getElementById(`dialog-tag-${tag.id}`)
-    ?.scrollIntoView({ block: "nearest" });
-  focusedTagIndex.value = filteredTags.value.findIndex(
-    (item) => item.id === tag.id,
-  );
-}
-let unlisten: (() => void) | undefined;
+  if (editor.value) scrollToTag(editorTagIndex.value);
+  else {
+    const viewport = tagScroller.value?.$el as HTMLElement | undefined;
+    if (viewport) tagScroller.value?.scrollToPosition(Math.min(viewport.scrollTop, Math.max(0, tagContentHeight.value - viewport.clientHeight)));
+  }
+});
+const error = ref("");
+const deleteTarget = ref<
+  (LibraryTag & { tag_count: number; file_count: number }) | null
+>(null);
+const tagsChangeSource = crypto.randomUUID();
 let disposed = false;
 let loadRequest = 0;
-
-onMounted(async () => {
-  window.addEventListener("keydown", handleKeyDown);
-  uiStore.pushInputHandler("TaggingDialog");
-
-  await nextTick();
-  tagSearchInputRef.value?.focus();
-
-  const stop = await listen("tags-changed", async () => {
-    await loadAllTags();
-    if (!disposed) await loadExistingTagsForFiles(true);
-  });
-  if (disposed) {
-    stop();
+let unlisten: (() => void) | undefined;
+function toggleBranch(id: number) {
+  if (tagSearch.value) return;
+  collapsed.value = collapsed.value.includes(id)
+    ? collapsed.value.filter((value) => value !== id)
+    : [...collapsed.value, id];
+}
+function cancelEditor() {
+  if (!isCreatingTag.value) editor.value = null;
+}
+function edit(tag?: LibraryTag, parent: number | null = null) {
+  if (!canEditTags.value || editor.value) return;
+  error.value = "";
+  tagSearch.value = "";
+  const parentId = tag ? tag.parent_id : parent;
+  const base = t("msgbox.new_tag.title");
+  let name = tag?.name ?? base;
+  let index = 0;
+  const names = new Set(
+    allTags.value
+      .filter((item) => item.parent_id === parentId)
+      .map((item) => item.name.toLocaleLowerCase()),
+  );
+  if (!tag)
+    while (names.has(name.toLocaleLowerCase())) name = `${base} ${++index}`;
+  editor.value = { id: tag?.id ?? null, name, parent: parentId };
+  const open = new Set(
+    parentId === null
+      ? []
+      : [parentId, ...ancestorIds(allTags.value, parentId)],
+  );
+  collapsed.value = collapsed.value.filter((id) => !open.has(id));
+}
+async function saveEditor(value: string) {
+  const target = editor.value;
+  if (!target || !canEditTags.value) return;
+  const name = value.trim();
+  if (!isValidTagName(name)) {
+    error.value = t("tag.invalid_name");
     return;
   }
-  unlisten = stop;
-  loadAllTags();
-  loadExistingTagsForFiles();
-});
-
-onBeforeUnmount(() => {
-  disposed = true;
-  loadRequest++;
-  unlisten?.();
-  window.removeEventListener("keydown", handleKeyDown);
-  uiStore.removeInputHandler("TaggingDialog");
-});
-
-// load all tags
+  if (
+    target.id !== null &&
+    allTags.value.find((tag) => tag.id === target.id)?.name === name
+  ) {
+    editor.value = null;
+    return;
+  }
+  if (
+    allTags.value.some(
+      (tag) =>
+        tag.id !== target.id &&
+        tag.parent_id === target.parent &&
+        tag.name.toLocaleLowerCase() === name.toLocaleLowerCase(),
+    )
+  ) {
+    error.value = t("tag.name_exists");
+    return;
+  }
+  isCreatingTag.value = true;
+  try {
+    const result =
+      target.id === null
+        ? await createTag(name, target.parent)
+        : await renameTag(target.id, name);
+    if (!result) throw new Error("save failed");
+    editor.value = null;
+    tagSearch.value = "";
+    await loadAllTags();
+    const id = target.id ?? result.id;
+    const ancestors = new Set(ancestorIds(allTags.value, id));
+    collapsed.value = collapsed.value.filter((value) => !ancestors.has(value));
+    if (target.id === null) {
+      const next = new Map(tagChanges.value);
+      next.set(id, "add");
+      tagChanges.value = next;
+      setTagVisualState(id, "selected");
+    }
+    await tauriEmit("tags-changed", { source: tagsChangeSource });
+    await nextTick();
+    scrollToTag(filteredTags.value.findIndex(tag => tag.id === id));
+  } catch {
+    error.value = t("tag.name_save_failed");
+  } finally {
+    isCreatingTag.value = false;
+  }
+}
 async function loadAllTags() {
   const request = ++loadRequest;
-  isLoadingCatalog.value = true;
   const library = libConfig._libraryId;
+  isLoadingCatalog.value = true;
   try {
-    const [tags, allGroups] = await Promise.all([
-      getAllTags(0),
-      getTagGroups(),
-    ]);
+    const tags = await getAllTags(0);
     if (disposed || request !== loadRequest || library !== libConfig._libraryId)
       return;
     if (!tags) throw new Error("load failed");
-    catalogLoadFailed.value = false;
-    groups.value = allGroups;
-    if (newTagGroupId.value !== null && !groups.value.some((group) => group.id === newTagGroupId.value))
-      cancelNewTag();
-    const sidebarCounts = libConfig.tag.counts || {};
-    allTags.value = tags.map((tag: any) => ({
-      ...tag,
-      count: Number(sidebarCounts[String(tag.id)] || 0),
-    }));
-    const ids = new Set(tags.map((tag: any) => tag.id));
+    allTags.value = tags;
+    const ids = new Set(tags.map((tag: LibraryTag) => tag.id));
     for (const id of tagChanges.value.keys())
       if (!ids.has(id)) tagChanges.value.delete(id);
+    catalogLoadFailed.value = false;
   } catch {
-    if (!disposed && request === loadRequest && library === libConfig._libraryId)
-      catalogLoadFailed.value = true;
+    if (request === loadRequest) catalogLoadFailed.value = true;
   } finally {
-    if (!disposed && request === loadRequest) isLoadingCatalog.value = false;
+    if (request === loadRequest) isLoadingCatalog.value = false;
   }
 }
 
@@ -454,82 +482,9 @@ async function loadExistingTagsForFiles(preserveChanges = false) {
   }
 }
 
-async function startNewTag(groupId: number) {
-  if (!canEditTags.value || isCreatingTag.value) return;
-  if (newTagGroupId.value !== null) {
-    newTagNameInputRef.value?.focus();
-    return;
-  }
-  cancelRename();
-  tagSearch.value = "";
-  collapsed.value = collapsed.value.filter((id) => id !== groupId);
-  const names = new Set(allTags.value.map((tag) => tag.name.toLocaleLowerCase()));
-  const baseName = t("msgbox.new_tag.title");
-  let name = baseName;
-  let index = 0;
-  while (names.has(name.toLocaleLowerCase())) name = `${baseName} ${++index}`;
-  newTagName.value = name;
-  newTagNameEdited.value = false;
-  newTagGroupId.value = groupId;
-  duplicateTag.value = null;
-  isInTagList.value = false;
-  focusedTagIndex.value = -1;
-  await nextTick();
-  newTagNameInputRef.value?.focus();
-  newTagNameInputRef.value?.select();
-}
-
-function cancelNewTag() {
-  if (isCreatingTag.value) return;
-  newTagGroupId.value = null;
-  newTagName.value = "";
-  newTagNameEdited.value = false;
-  duplicateTag.value = null;
-}
-
-function onNewTagBlur() {
-  if (!newTagNameEdited.value) cancelNewTag();
-  else addNewTag();
-}
-
-async function addNewTag() {
-  if (!canEditTags.value || newTagGroupId.value === null || isCreatingTag.value) return;
-  const name = newTagName.value.trim();
-  if (!name) {
-    cancelNewTag();
-    return;
-  }
-  const existing = allTags.value.find(
-    (tag) => tag.name.toLocaleLowerCase() === name.toLocaleLowerCase(),
-  );
-  if (existing) {
-    duplicateTag.value = existing;
-    return;
-  }
-  isCreatingTag.value = true;
-  try {
-    const newTag = await createTag(name, newTagGroupId.value);
-    if (!newTag) {
-      toast.error(t("tag.name_save_failed"));
-      return;
-    }
-    allTags.value.push(newTag);
-    toggleTag(newTag.id);
-    newTagGroupId.value = null;
-    newTagName.value = "";
-    duplicateTag.value = null;
-    await tauriEmit("tags-changed");
-    await nextTick();
-    document.getElementById(`dialog-tag-${newTag.id}`)?.scrollIntoView({ block: "nearest" });
-  } catch {
-    toast.error(t("tag.name_save_failed"));
-  } finally {
-    isCreatingTag.value = false;
-  }
-}
-
+// TAG_SELECTION_TEST_BEGIN: keep these markers for the isolated selection tests.
 function toggleTag(tagId: number) {
-  if (!canEditTags.value) return;
+  if (!canEditTags.value || editor.value) return;
   const normalized = Number(tagId);
   const next = new Map(tagChanges.value);
   const current = next.get(normalized);
@@ -573,196 +528,156 @@ function setTagVisualState(
   intermediateTags.value = intermediate;
 }
 
-async function startRename(tag: any) {
-  renamingId.value = Number(tag.id);
-  renameValue.value = String(tag.name || "");
-  await nextTick();
-  const input = Array.isArray(renameInput.value)
-    ? renameInput.value[0]
-    : renameInput.value;
-  input?.focus({ preventScroll: true });
-  input?.select();
-}
-
-function cancelRename() {
-  renamingId.value = null;
-  renameValue.value = "";
-}
-
-async function commitRename(tag: any) {
-  if (renamingId.value !== Number(tag.id)) return;
-  const name = renameValue.value.trim();
-  if (name && name !== tag.name) {
-    const duplicate = allTags.value.some(
-      (item) =>
-        Number(item.id) !== Number(tag.id) &&
-        String(item.name).toLocaleLowerCase() === name.toLocaleLowerCase(),
-    );
-    if (duplicate) {
-      toast.error(t("tag.name_exists"));
-      cancelRename();
-      return;
-    }
-    if (await renameTag(Number(tag.id), name)) {
-      tag.name = name;
-      await tauriEmit("tags-changed");
-    } else {
-      toast.error(t("tag.name_save_failed"));
-    }
+// TAG_SELECTION_TEST_END
+async function prepareDelete(tag: LibraryTag) {
+  if (!canEditTags.value) return;
+  const library = libConfig._libraryId;
+  try {
+    const info = await getTagSubtreeInfo(tag.id);
+    if (!disposed && library === libConfig._libraryId && info.tag_count > 0)
+      deleteTarget.value = { ...tag, ...info };
+  } catch {
+    toast.error(t("tag.load_failed"));
   }
-  cancelRename();
 }
-
 async function confirmDelete() {
-  const tag = deleteTarget.value;
-  if (!tag) return;
-  deleteTarget.value = null;
-  if (!(await deleteTag(Number(tag.id)))) return;
-  const tagId = Number(tag.id);
-  allTags.value = allTags.value.filter((item) => Number(item.id) !== tagId);
-  selectedTags.value.delete(tagId);
-  intermediateTags.value.delete(tagId);
-  initialSelectedTags.value.delete(tagId);
-  initialIntermediateTags.value.delete(tagId);
-  tagChanges.value.delete(tagId);
-  const states = await applyTagsToFiles(props.fileIds, [], []);
-  if (states !== null) emit("states-changed", states);
-  await tauriEmit("tags-changed");
+  if (!deleteTarget.value || !canEditTags.value) return;
+  isCreatingTag.value = true;
+  try {
+    if (!(await deleteTag(deleteTarget.value.id)))
+      throw new Error("delete failed");
+    deleteTarget.value = null;
+    await loadAllTags();
+    await loadExistingTagsForFiles(true);
+    const states = await applyTagsToFiles(props.fileIds, [], []);
+    if (states !== null) emit("states-changed", states);
+    await tauriEmit("tags-changed", { source: tagsChangeSource });
+  } catch {
+    toast.error(t("tag.delete_failed"));
+  } finally {
+    isCreatingTag.value = false;
+  }
 }
-
 async function clickOk() {
-  if (
-    isLoadingTags.value ||
-    isLoadingCatalog.value ||
-    isApplyingTags.value ||
-    isCreatingTag.value ||
-    newTagGroupId.value !== null ||
-    tagLoadFailed.value
-  )
-    return;
+  if (!canEditTags.value || editor.value) return;
   isApplyingTags.value = true;
-  const addTagIds = Array.from(tagChanges.value)
-    .filter(([, change]) => change === "add")
-    .map(([tagId]) => tagId);
-  const removeTagIds = Array.from(tagChanges.value)
-    .filter(([, change]) => change === "remove")
-    .map(([tagId]) => tagId);
-  const result = await applyTagsToFiles(props.fileIds, addTagIds, removeTagIds);
-  if (result !== null) {
-    await tauriEmit("tags-changed");
-    emit("ok", result);
-  } else {
+  const add = Array.from(tagChanges.value)
+    .filter(([, action]) => action === "add")
+    .map(([id]) => id);
+  const remove = Array.from(tagChanges.value)
+    .filter(([, action]) => action === "remove")
+    .map(([id]) => id);
+  const library = libConfig._libraryId;
+  const tagId = Number(libConfig.tag.id);
+  const branch = add.length === 0 && remove.length > 0 && allTags.value.some(tag => tag.id === tagId)
+    ? subtreeIds(allTags.value, tagId) : null;
+  try {
+    const result = await applyTagsToFiles(props.fileIds, add, remove);
+    if (library !== libConfig._libraryId || disposed) return;
+    if (result !== null) {
+      emit("ok", result, branch ? { library, tagId, branch } : null);
+    }
+  } finally {
     isApplyingTags.value = false;
   }
 }
-
 function clickCancel() {
-  emit("cancel");
+  if (!isApplyingTags.value) emit("cancel");
 }
-
-watch(newTagName, () => { duplicateTag.value = null; });
-
-// Reset tag focus when search results change
-watch(filteredTags, () => {
-  focusedTagIndex.value = -1;
-  isInTagList.value = false;
-});
-
-function onSearchFocus() {
-  isSearchFocused.value = true;
-  isInTagList.value = false;
-  focusedTagIndex.value = -1;
-}
-
-function onSearchBlur() {
-  isSearchFocused.value = false;
-}
-
-function enterTagList() {
-  if (filteredTags.value.length > 0) {
-    isInTagList.value = true;
-    focusedTagIndex.value = 0;
-    tagSearchInputRef.value?.blur();
-    newTagNameInputRef.value?.blur();
-  }
-}
-
-function exitTagList() {
-  isInTagList.value = false;
-  focusedTagIndex.value = -1;
-  tagSearchInputRef.value?.focus();
-}
-
-// Keyboard: ArrowDown→tag list, Space→toggle, Enter→OK, Escape→back/close
-const handleKeyDown = (e: KeyboardEvent) => {
-  if (!uiStore.isInputActive("TaggingDialog")) return;
-
-  const { key } = e;
-  const active = document.activeElement;
+function handleKeyDown(event: KeyboardEvent) {
   if (
-    active instanceof HTMLSelectElement ||
-    (active instanceof HTMLButtonElement && !isInTagList.value)
+    !uiStore.isInputActive("TaggingDialog") ||
+    editor.value ||
+    deleteTarget.value ||
+    event.defaultPrevented
   )
     return;
-  const isInAnyInput =
-    active === tagSearchInputRef.value || active === newTagNameInputRef.value;
-
-  // Escape: tag list → search input → close dialog
-  if (key === "Escape") {
-    if (isInTagList.value) {
-      exitTagList();
-    } else {
-      clickCancel();
-    }
+  if (event.key === "Escape") {
+    if (focusedTagIndex.value >= 0) {
+      focusedTagIndex.value = -1;
+      tagSearchInputRef.value?.focus();
+    } else clickCancel();
     return;
   }
-
-  // ArrowDown → enter tag list (from any state, unless already navigating)
-  if (key === "ArrowDown" && !isInTagList.value) {
-    e.preventDefault();
-    enterTagList();
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    event.preventDefault();
+    const last = filteredTags.value.length - 1;
+    focusedTagIndex.value = Math.max(
+      0,
+      Math.min(
+        last,
+        focusedTagIndex.value + (event.key === "ArrowDown" ? 1 : -1),
+      ),
+    );
+    tagSearchInputRef.value?.blur();
+    scrollToTag(focusedTagIndex.value);
+  } else if (event.key === " " && focusedTagIndex.value >= 0) {
+    event.preventDefault();
+    const tag = filteredTags.value[focusedTagIndex.value];
+    if (tag) toggleTag(tag.id);
+  } else if (
+    (event.key === "ArrowRight" || event.key === "ArrowLeft") &&
+    focusedTagIndex.value >= 0
+  ) {
+    event.preventDefault();
+    const tag = filteredTags.value[focusedTagIndex.value];
+    if (
+      tag?.hasChildren &&
+      collapsed.value.includes(tag.id) === (event.key === "ArrowRight")
+    )
+      toggleBranch(tag.id);
+  } else if (event.key === "Enter") {
+    event.preventDefault();
+    void clickOk();
+  }
+}
+onMounted(async () => {
+  uiStore.pushInputHandler("TaggingDialog");
+  window.addEventListener("keydown", handleKeyDown);
+  tagListObserver = new ResizeObserver(() => {
+    tagListWidth.value = Math.max(0, (tagListContainer.value?.clientWidth ?? 0) - 16);
+  });
+  // ModalDialog renders its slot on the next tick, after it becomes visible.
+  void nextTick(() => {
+    if (disposed || !tagListContainer.value) return;
+    tagListWidth.value = Math.max(0, tagListContainer.value.clientWidth - 16);
+    tagListObserver?.observe(tagListContainer.value);
+  });
+  // Catalog and selection reads must not wait for event subscription.
+  void Promise.all([loadAllTags(), loadExistingTagsForFiles()]).then(async () => {
+    await nextTick();
+    if (!disposed) tagSearchInputRef.value?.focus();
+  });
+  const stop = await listen<{ source?: string }>(
+    "tags-changed",
+    async (event) => {
+      if (event.payload?.source === tagsChangeSource) return;
+      await loadAllTags();
+      if (!disposed) await loadExistingTagsForFiles(true);
+    },
+  );
+  if (disposed) {
+    stop();
     return;
   }
+  unlisten = stop;
 
-  // Tag list keyboard navigation
-  if (isInTagList.value && filteredTags.value.length > 0) {
-    const lastIndex = filteredTags.value.length - 1;
-
-    if (key === "ArrowRight") {
-      e.preventDefault();
-      focusedTagIndex.value =
-        focusedTagIndex.value >= lastIndex ? 0 : focusedTagIndex.value + 1;
-    } else if (key === "ArrowLeft") {
-      e.preventDefault();
-      focusedTagIndex.value =
-        focusedTagIndex.value <= 0 ? lastIndex : focusedTagIndex.value - 1;
-    } else if (key === "ArrowUp") {
-      e.preventDefault();
-      exitTagList();
-    } else if (key === " ") {
-      e.preventDefault();
-      const tag = filteredTags.value[focusedTagIndex.value];
-      if (tag) toggleTag(tag.id);
-    } else if (key === "Enter") {
-      e.preventDefault();
-      clickOk();
-    } else if (key === "Tab") {
-      e.preventDefault();
-      if (e.shiftKey) {
-        isInTagList.value = false;
-        focusedTagIndex.value = -1;
-        tagSearchInputRef.value?.focus();
-      } else {
-        exitTagList(); // Tab → back to search input (keep focus inside dialog)
-      }
-    }
-    return;
-  }
-
-  // Enter → confirm dialog (when not typing in any input)
-  if (key === "Enter" && !isInAnyInput) {
-    e.preventDefault();
-    clickOk();
-  }
-};
+});
+onBeforeUnmount(() => {
+  disposed = true;
+  tagListObserver?.disconnect();
+  loadRequest++;
+  selectionRequest++;
+  unlisten?.();
+  window.removeEventListener("keydown", handleKeyDown);
+  uiStore.removeInputHandler("TaggingDialog");
+});
+watch(() => libConfig._libraryId, clickCancel);
+watch(showSelectedOnly, enabled => {
+  if (enabled) collapsed.value = [];
+});
+watch([tagSearch, showSelectedOnly], () => {
+  focusedTagIndex.value = -1;
+  tagScroller.value?.scrollToPosition(0);
+});
 </script>

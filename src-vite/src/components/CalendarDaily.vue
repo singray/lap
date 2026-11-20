@@ -91,7 +91,7 @@ const localeMsg = computed(() => messages.value[locale.value] as any);
 const weekdayLabels = computed(() => localeMsg.value.calendar?.weekdays || ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']);
 
 // Title of the month
-const monthTitle = computed(() => formatDate(props.year, props.month, 1, localeMsg.value.format.month));
+const monthTitle = computed(() => formatDate(props.year, props.month, 1, 'month'));
 
 // Blank days at the start of the calendar (for proper alignment)
 const blankDates = computed(() => {
