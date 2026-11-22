@@ -1214,7 +1214,6 @@
     "fields_default": "Par défaut",
     "fields_all": "Tout afficher",
     "fields_custom": "Personnalisé",
-
     "hide_empty_fields": "Masquer automatiquement les champs vides",
     "customize_fields": "Personnaliser les champs",
     "title": "Info fichier",
@@ -1311,7 +1310,7 @@
     "standard": "Standard",
     "satellite": "Satellite",
     "gaode": "Gaode",
-"heatmap": "Carte thermique",
+    "heatmap": "Carte thermique",
     "photo_count": "{count} photos",
     "no_photos_in_view": "Aucune photo",
     "photos_in_view": "{count} photos dans cette zone",
@@ -1750,7 +1749,14 @@
         "tianditu_token_hint": "Requis pour les tuiles Tianditu",
         "tianditu_token_placeholder": "Collez votre jeton",
         "tianditu_token_status_saved": "Enregistré",
-        "tianditu_token_status_empty": "Non configuré"
+        "tianditu_token_status_empty": "Non configuré",
+        "map_tile_source": "Style de carte",
+        "map_tile_source_hint": "Choisissez les tuiles pour la vue carte",
+        "map_tile_source_options": [
+          "OpenStreetMap (par défaut)",
+          "Gaode (Chine, sans proxy)",
+          "Satellite (Esri)"
+        ]
       },
       "thumbnail_cache": {
         "rolling_back": "Restauration en cours…",

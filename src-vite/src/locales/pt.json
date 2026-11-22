@@ -1214,7 +1214,6 @@
     "fields_default": "Padrão",
     "fields_all": "Mostrar todos",
     "fields_custom": "Personalizado",
-
     "hide_empty_fields": "Ocultar automaticamente campos vazios",
     "customize_fields": "Personalizar campos",
     "title": "Info do arquivo",
@@ -1311,7 +1310,7 @@
     "standard": "Padrão",
     "satellite": "Satélite",
     "gaode": "Gaode",
-"heatmap": "Mapa de calor",
+    "heatmap": "Mapa de calor",
     "photo_count": "{count} fotos",
     "no_photos_in_view": "Nenhuma foto",
     "photos_in_view": "{count} fotos nesta área",
@@ -1750,7 +1749,14 @@
         "tianditu_token_hint": "Necessário para blocos do Tianditu",
         "tianditu_token_placeholder": "Cole seu token",
         "tianditu_token_status_saved": "Guardado",
-        "tianditu_token_status_empty": "Não configurado"
+        "tianditu_token_status_empty": "Não configurado",
+        "map_tile_source": "Estilo do mapa",
+        "map_tile_source_hint": "Escolha os mosaicos para a visualização do mapa",
+        "map_tile_source_options": [
+          "OpenStreetMap (padrão)",
+          "Gaode (China, sem proxy)",
+          "Satélite (Esri)"
+        ]
       },
       "thumbnail_cache": {
         "rolling_back": "Revertendo…",

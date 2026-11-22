@@ -1214,7 +1214,6 @@
     "fields_default": "Standaard",
     "fields_all": "Alles tonen",
     "fields_custom": "Aangepast",
-
     "hide_empty_fields": "Lege velden automatisch verbergen",
     "customize_fields": "Velden aanpassen",
     "title": "Informatie",
@@ -1311,7 +1310,7 @@
     "standard": "Standaard",
     "satellite": "Satelliet",
     "gaode": "Gaode",
-"heatmap": "Hittekaart",
+    "heatmap": "Hittekaart",
     "photo_count": "{count} foto's",
     "no_photos_in_view": "Geen foto's",
     "photos_in_view": "{count} foto's in dit gebied",
@@ -1750,7 +1749,14 @@
         "tianditu_token_hint": "Vereist voor Tianditu-kaarttegels",
         "tianditu_token_placeholder": "Plak je token",
         "tianditu_token_status_saved": "Opgeslagen",
-        "tianditu_token_status_empty": "Niet ingesteld"
+        "tianditu_token_status_empty": "Niet ingesteld",
+        "map_tile_source": "Kaartstijl",
+        "map_tile_source_hint": "Kies de tegels voor de kaartweergave",
+        "map_tile_source_options": [
+          "OpenStreetMap (standaard)",
+          "Gaode (China, zonder proxy)",
+          "Satelliet (Esri)"
+        ]
       },
       "thumbnail_cache": {
         "rolling_back": "Terugdraaien…",

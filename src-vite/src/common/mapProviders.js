@@ -1,8 +1,10 @@
 const GLOBAL_THEMES = [
   {
     // Default source: reachable from China without a proxy, with Chinese
-    // labels.
+    // labels. Gaode only serves real tiles from zoom 3 up; below that every
+    // tile is a blank white placeholder, so clamp the minimum zoom.
     maxZoom: 18,
+    minZoom: 3,
     layers: [
       {
         url: 'https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}',
@@ -27,8 +29,19 @@ const GLOBAL_THEMES = [
   },
 ];
 
+// GLOBAL_THEMES indices for the named tile sources exposed in Settings.
+export const MAP_TILE_SOURCE_THEME_INDEX = { gaode: 0, satellite: 1, osm: 2 };
+
 // UI toggle and tile-error fallback both walk Gaode -> OSM -> ArcGIS.
 const GLOBAL_THEME_CYCLE = [0, 2, 1];
+
+export function themeIndexForTileSource(tileSource) {
+  return MAP_TILE_SOURCE_THEME_INDEX[tileSource] ?? MAP_TILE_SOURCE_THEME_INDEX.osm;
+}
+
+export function tileSourceForThemeIndex(themeIndex) {
+  return themeIndex === 0 ? 'gaode' : themeIndex === 1 ? 'satellite' : 'osm';
+}
 
 export function cycleGlobalThemeIndex(themeIndex) {
   const pos = GLOBAL_THEME_CYCLE.indexOf(Number(themeIndex));
@@ -81,6 +94,7 @@ export function createTileLayerGroup(L, theme) {
   const layers = theme.layers.map(({ url, attribution, subdomains }) => L.tileLayer(url, {
     attribution,
     maxZoom: theme.maxZoom,
+    ...(theme.minZoom != null ? { minZoom: theme.minZoom } : {}),
     // Fetch tiles while panning/zooming instead of waiting for the gesture to
     // end, and keep extra offscreen tiles so scrolling back is instant.
     updateWhenIdle: false,

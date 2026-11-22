@@ -37,6 +37,11 @@ use tauri::{Emitter, State};
 use tokio::sync::Semaphore;
 use walkdir::WalkDir;
 
+/// Cached overview map points. Keyed by database path + its mtime/size + the
+/// serialized query params: any write to the library updates the db mtime,
+/// which naturally invalidates stale results without touching callers.
+static GPS_MAP_POINTS_CACHE: OnceLock<Mutex<HashMap<String, Vec<AGpsMapPoint>>>> = OnceLock::new();
+
 static THUMB_GENERATION_LOCKS: OnceLock<ThumbGenerationLocks> = OnceLock::new();
 static THUMB_BACKGROUND_TASKS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 static THUMB_BACKGROUND_GENERATION_PERMITS: OnceLock<Arc<Semaphore>> = OnceLock::new();
@@ -10235,7 +10240,7 @@ impl ALocation {
 
 /// A map thumbnail cluster. `file_id` identifies a representative image for
 /// the cluster, while `count` contains every matching photo in the cell.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AGpsMapPoint {
     pub rank: i64,
     pub lat: f64,
@@ -10245,7 +10250,45 @@ pub struct AGpsMapPoint {
 }
 
 impl AGpsMapPoint {
+    /// Cache key covering the current library, its modification state, and the
+    /// query. SQLite writes update the db file mtime, so edited/imported/deleted
+    /// GPS data shows up on the next call without explicit invalidation.
+    fn cache_key(params: &QueryParams) -> Option<String> {
+        let path = t_storage::get_current_db_path().ok()?;
+        // WAL mode keeps recent writes in the -wal sidecar, so include its
+        // state as well as the main db file to detect every commit.
+        let mut state = String::new();
+        for suffix in ["", "-wal", "-shm"] {
+            let sidecar = format!("{}{}", path, suffix);
+            match fs::metadata(&sidecar) {
+                Ok(meta) => {
+                    let mtime = meta
+                        .modified()
+                        .ok()
+                        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                        .map(|d| d.as_nanos())
+                        .unwrap_or(0);
+                    state.push_str(&format!("{}:{}|", mtime, meta.len()));
+                }
+                Err(_) => state.push_str("none|"),
+            }
+        }
+        let query = serde_json::to_string(params).unwrap_or_default();
+        Some(format!("{}:{}:{}", path, state, query))
+    }
+
     pub fn get_map_points_from_db(params: &QueryParams) -> Result<Vec<Self>, String> {
+        if let (Some(key), Some(cache)) = (
+            Self::cache_key(params),
+            GPS_MAP_POINTS_CACHE.get(),
+        ) {
+            if let Ok(cache) = cache.lock() {
+                if let Some(points) = cache.get(&key) {
+                    return Ok(points.clone());
+                }
+            }
+        }
+
         let conn = open_conn()?;
         let (joins, where_clause, sql_params) = AFile::build_search_query_parts(params);
         let query = format!(
@@ -10275,7 +10318,19 @@ impl AGpsMapPoint {
             })
             .map_err(|e| e.to_string())?
             .filter_map(|r| r.ok())
-            .collect();
+            .collect::<Vec<Self>>();
+
+        if let Some(key) = Self::cache_key(params) {
+            let cache = GPS_MAP_POINTS_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+            if let Ok(mut cache) = cache.lock() {
+                // Keep only a few query variants; mtime in the key drops stale
+                // entries implicitly when the library is written to.
+                if cache.len() >= 8 {
+                    cache.clear();
+                }
+                cache.insert(key, points.clone());
+            }
+        }
         Ok(points)
     }
 }

@@ -1214,7 +1214,6 @@
     "fields_default": "Standard",
     "fields_all": "Alle anzeigen",
     "fields_custom": "Benutzerdefiniert",
-
     "hide_empty_fields": "Leere Felder automatisch ausblenden",
     "customize_fields": "Felder anpassen",
     "title": "Datei-Info",
@@ -1311,7 +1310,7 @@
     "standard": "Standard",
     "satellite": "Satellit",
     "gaode": "Gaode",
-"heatmap": "Heatmap",
+    "heatmap": "Heatmap",
     "photo_count": "{count} Fotos",
     "no_photos_in_view": "Keine Fotos",
     "photos_in_view": "{count} Fotos in diesem Bereich",
@@ -1750,7 +1749,14 @@
         "tianditu_token_hint": "Für Tianditu-Kacheln erforderlich",
         "tianditu_token_placeholder": "Token einfügen",
         "tianditu_token_status_saved": "Gespeichert",
-        "tianditu_token_status_empty": "Nicht konfiguriert"
+        "tianditu_token_status_empty": "Nicht konfiguriert",
+        "map_tile_source": "Kartenstil",
+        "map_tile_source_hint": "Wähle die Kartenkacheln für die Kartenansicht",
+        "map_tile_source_options": [
+          "OpenStreetMap (Standard)",
+          "Gaode (China, ohne Proxy)",
+          "Satellit (Esri)"
+        ]
       },
       "thumbnail_cache": {
         "rolling_back": "Änderungen werden zurückgenommen…",

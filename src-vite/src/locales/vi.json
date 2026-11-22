@@ -1748,7 +1748,14 @@
         "tianditu_token_hint": "Bắt buộc để dùng ô bản đồ Tianditu",
         "tianditu_token_placeholder": "Dán token của bạn",
         "tianditu_token_status_saved": "Đã lưu",
-        "tianditu_token_status_empty": "Chưa cấu hình"
+        "tianditu_token_status_empty": "Chưa cấu hình",
+        "map_tile_source": "Kiểu bản đồ",
+        "map_tile_source_hint": "Chọn ô bản đồ cho chế độ xem bản đồ",
+        "map_tile_source_options": [
+          "OpenStreetMap (mặc định)",
+          "Gaode (Trung Quốc, không cần proxy)",
+          "Vệ tinh (Esri)"
+        ]
       },
       "thumbnail_cache": {
         "cleanup": {

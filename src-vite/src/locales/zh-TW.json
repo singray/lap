@@ -1214,7 +1214,6 @@
     "fields_default": "預設",
     "fields_all": "全部顯示",
     "fields_custom": "自訂",
-
     "hide_empty_fields": "自動隱藏空白欄位",
     "customize_fields": "自訂欄位",
     "title": "資訊",
@@ -1749,7 +1748,14 @@
         "tianditu_token_hint": "天地圖圖磚所需",
         "tianditu_token_placeholder": "貼上你的權杖",
         "tianditu_token_status_saved": "已儲存",
-        "tianditu_token_status_empty": "未設定"
+        "tianditu_token_status_empty": "未設定",
+        "map_tile_source": "地圖瓦片",
+        "map_tile_source_hint": "選擇地圖視圖使用的瓦片圖源",
+        "map_tile_source_options": [
+          "OpenStreetMap（預設）",
+          "高德地圖（中國大陸直連）",
+          "衛星圖（Esri）"
+        ]
       },
       "thumbnail_cache": {
         "cleanup": {

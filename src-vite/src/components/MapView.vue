@@ -5,7 +5,7 @@
     @mouseleave="uiStore.setMapActive(false)"
   >
     <div ref="mapEl" style="width:100%; height:100%;"></div>
-    <div class="absolute top-2 left-2 flex bg-base-100/30 hover:bg-base-100/70 rounded-box z-500 cursor-pointer opacity-0 pointer-events-none transition-opacity duration-150 group-hover/map:opacity-100 group-hover/map:pointer-events-auto">
+    <div class="absolute top-2 left-2 flex bg-base-100/70 hover:bg-base-100/90 rounded-box z-500 cursor-pointer transition-opacity duration-150">
       <TButton
         :icon="IconZoomOut"
         :tooltip="t('map.zoom_out')"
@@ -24,8 +24,8 @@
         @click="zoomCenter"
       />
       <TButton
-        :icon="config.infoPanel.mapTheme === 1 ? IconMapSatellite : IconMapDefault"
-        :tooltip="t(config.infoPanel.mapTheme === 0 ? 'map.gaode' : config.infoPanel.mapTheme === 2 ? 'map.standard' : 'map.satellite')"
+        :icon="config.settings.mapTileSource === 'satellite' ? IconMapSatellite : IconMapDefault"
+        :tooltip="t(config.settings.mapTileSource === 'gaode' ? 'map.gaode' : config.settings.mapTileSource === 'osm' ? 'map.standard' : 'map.satellite')"
         @click="toggleMap"
       />
       <TButton
@@ -43,7 +43,7 @@ import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { config } from '@/common/config'
 import { openExternalUrl } from '@/common/api'
-import { createTileLayerGroup, cycleGlobalThemeIndex, getGlobalMapTheme, getMapTheme, nextGlobalFallbackThemeIndex } from '@/common/mapProviders'
+import { createTileLayerGroup, cycleGlobalThemeIndex, getGlobalMapTheme, getMapTheme, nextGlobalFallbackThemeIndex, themeIndexForTileSource, tileSourceForThemeIndex } from '@/common/mapProviders'
 import { isMac } from '@/common/utils'
 import { useUIStore } from '@/stores/uiStore'
 
@@ -142,7 +142,7 @@ onBeforeUnmount(() => {
 watch(() => [props.lat, props.lon, props.zoom], () => {
   updateFromProps()
 })
-watch(() => [config.infoPanel.mapTheme, config.settings.mapProvider, config.settings.tiandituToken], updateTheme)
+watch(() => [config.settings.mapTileSource, config.settings.mapProvider, config.settings.tiandituToken], updateTheme)
 
 function updateFromProps() {
   if (!map) return
@@ -190,13 +190,15 @@ function zoomCenter() {
 }
 
 function toggleMap() {
-  config.infoPanel.mapTheme = cycleGlobalThemeIndex(config.infoPanel.mapTheme);
+  const next = cycleGlobalThemeIndex(themeIndexForTileSource(config.settings.mapTileSource));
+  config.settings.mapTileSource = tileSourceForThemeIndex(next);
   updateTheme();
 }
 
 function updateTheme() {
-  displayedThemeIndex = config.settings.mapProvider === 'tianditu' ? 0 : Number(config.infoPanel.mapTheme) || 0;
-  const theme = getMapTheme(config.settings.mapProvider, config.settings.tiandituToken, config.infoPanel.mapTheme)
+  const sourceIndex = themeIndexForTileSource(config.settings.mapTileSource);
+  displayedThemeIndex = config.settings.mapProvider === 'tianditu' ? 0 : sourceIndex;
+  const theme = getMapTheme(config.settings.mapProvider, config.settings.tiandituToken, sourceIndex)
   applyTheme(theme, false)
 }
 
@@ -206,6 +208,7 @@ function applyTheme(theme, isFallback) {
 
   activeMaxZoom.value = theme.maxZoom
   map.setMaxZoom(theme.maxZoom)
+  map.setMinZoom(theme.minZoom ?? 0)
   if (map.getZoom() > theme.maxZoom) map.setZoom(theme.maxZoom)
   if (!isFallback) tileErrorFallbackTriggered = false
 

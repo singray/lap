@@ -8,13 +8,13 @@
       <span class="loading loading-spinner loading-md text-primary"></span>
     </div>
     <div ref="mapEl" class="h-full w-full"></div>
-    <div class="absolute top-2 left-2 z-500 flex cursor-pointer rounded-box bg-base-100/30 opacity-0 pointer-events-none transition-opacity duration-150 group-hover/map:bg-base-100/70 group-hover/map:opacity-100 group-hover/map:pointer-events-auto">
+    <div class="absolute top-2 left-2 z-500 flex cursor-pointer rounded-box bg-base-100/70 transition-opacity duration-150">
       <TButton :icon="IconZoomOut" :tooltip="t('map.zoom_out')" :disabled="zoom <= 0" @click="zoomOut" />
       <TButton :icon="IconZoomIn" :tooltip="t('map.zoom_in')" :disabled="zoom >= activeMaxZoom" @click="zoomIn" />
       <TButton :icon="IconMapCenter" :tooltip="t('map.zoom_center')" @click="isQueryMap ? fitBounds() : zoomCenter()" />
       <TButton
-        :icon="config.infoPanel.mapTheme === 1 ? IconMapSatellite : IconMapDefault"
-        :tooltip="t(config.infoPanel.mapTheme === 0 ? 'map.gaode' : config.infoPanel.mapTheme === 2 ? 'map.standard' : 'map.satellite')"
+        :icon="config.settings.mapTileSource === 'satellite' ? IconMapSatellite : IconMapDefault"
+        :tooltip="t(config.settings.mapTileSource === 'gaode' ? 'map.gaode' : config.settings.mapTileSource === 'osm' ? 'map.standard' : 'map.satellite')"
         @click="toggleMap"
       />
       <TButton v-if="showAppleMapsButton" :icon="IconExternal" :tooltip="t('file_info.open_apple_maps')" @click="openAppleMaps" />
@@ -33,7 +33,7 @@ import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 
 import { config } from '@/common/config'
-import { createTileLayerGroup, cycleGlobalThemeIndex, getGlobalMapTheme, getMapTheme, nextGlobalFallbackThemeIndex } from '@/common/mapProviders'
+import { createTileLayerGroup, cycleGlobalThemeIndex, getGlobalMapTheme, getMapTheme, nextGlobalFallbackThemeIndex, themeIndexForTileSource, tileSourceForThemeIndex } from '@/common/mapProviders'
 import {
   getCollectionQueryFileIds,
   getFilesByIds,
@@ -141,7 +141,7 @@ onBeforeUnmount(() => {
   map = null
 })
 
-watch(() => [config.infoPanel.mapTheme, config.settings.mapProvider, config.settings.tiandituToken], updateTheme)
+watch(() => [config.settings.mapTileSource, config.settings.mapProvider, config.settings.tiandituToken], updateTheme)
 watch(() => [props.selectedFile?.id, props.selectedFile?.gps_latitude, props.selectedFile?.gps_longitude], updateMarkerSelection)
 watch(() => config.settings.mapMarkerSize, () => renderMarkers())
 watch(() => [props.queryParams, props.querySource, props.collectionId, props.fileIds], () => {
@@ -490,8 +490,9 @@ function addPhotoMarker(lat, lon, fileId, count, cluster = null) {
 }
 
 function updateTheme() {
-  displayedThemeIndex = config.settings.mapProvider === 'tianditu' ? 0 : Number(config.infoPanel.mapTheme) || 0
-  const theme = getMapTheme(config.settings.mapProvider, config.settings.tiandituToken, config.infoPanel.mapTheme)
+  const sourceIndex = themeIndexForTileSource(config.settings.mapTileSource)
+  displayedThemeIndex = config.settings.mapProvider === 'tianditu' ? 0 : sourceIndex
+  const theme = getMapTheme(config.settings.mapProvider, config.settings.tiandituToken, sourceIndex)
   applyTheme(theme, false)
 }
 
@@ -500,6 +501,7 @@ function applyTheme(theme, isFallback) {
   if (tileLayer) map.removeLayer(tileLayer)
   activeMaxZoom.value = theme.maxZoom
   map.setMaxZoom(theme.maxZoom)
+  map.setMinZoom(theme.minZoom ?? 0)
   if (map.getZoom() > theme.maxZoom) map.setZoom(theme.maxZoom)
   if (!isFallback) tileErrorFallbackTriggered = false
 
@@ -536,7 +538,10 @@ function zoomCenter() {
   zoom.value = 13
   updateFromCoords()
 }
-function toggleMap() { config.infoPanel.mapTheme = cycleGlobalThemeIndex(config.infoPanel.mapTheme) }
+function toggleMap() {
+  const next = cycleGlobalThemeIndex(themeIndexForTileSource(config.settings.mapTileSource))
+  config.settings.mapTileSource = tileSourceForThemeIndex(next)
+}
 function validLatLon(lat, lon) { return lat != null && lon != null && lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180 }
 async function openAppleMaps() {
   if (!showAppleMapsButton.value) return

@@ -1214,7 +1214,6 @@
     "fields_default": "Predefinito",
     "fields_all": "Mostra tutti",
     "fields_custom": "Personalizzato",
-
     "hide_empty_fields": "Nascondi automaticamente i campi vuoti",
     "customize_fields": "Personalizza campi",
     "title": "Informazioni",
@@ -1749,7 +1748,14 @@
         "tianditu_token_hint": "Necessario per i tile della mappa Tianditu",
         "tianditu_token_placeholder": "Incolla il tuo token",
         "tianditu_token_status_saved": "Salvato",
-        "tianditu_token_status_empty": "Non configurato"
+        "tianditu_token_status_empty": "Non configurato",
+        "map_tile_source": "Stile mappa",
+        "map_tile_source_hint": "Scegli le tessere per la vista mappa",
+        "map_tile_source_options": [
+          "OpenStreetMap (predefinito)",
+          "Gaode (Cina, senza proxy)",
+          "Satellite (Esri)"
+        ]
       },
       "thumbnail_cache": {
         "rolling_back": "Ripristino…",

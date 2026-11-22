@@ -1214,7 +1214,6 @@
     "fields_default": "По умолчанию",
     "fields_all": "Показать все",
     "fields_custom": "Настроить",
-
     "hide_empty_fields": "Автоматически скрывать пустые поля",
     "customize_fields": "Настроить поля",
     "title": "Информация",
@@ -1311,7 +1310,7 @@
     "standard": "Стандарт",
     "satellite": "Спутник",
     "gaode": "Gaode",
-"heatmap": "Тепловая карта",
+    "heatmap": "Тепловая карта",
     "photo_count": "{count} фото",
     "no_photos_in_view": "Нет фотографий",
     "photos_in_view": "{count} фото в этой области",
@@ -1750,7 +1749,14 @@
         "tianditu_token_hint": "Требуется для тайлов Tianditu",
         "tianditu_token_placeholder": "Вставьте токен",
         "tianditu_token_status_saved": "Сохранено",
-        "tianditu_token_status_empty": "Не настроено"
+        "tianditu_token_status_empty": "Не настроено",
+        "map_tile_source": "Стиль карты",
+        "map_tile_source_hint": "Выберите тайлы для карты",
+        "map_tile_source_options": [
+          "OpenStreetMap (по умолчанию)",
+          "Gaode (Китай, без прокси)",
+          "Спутник (Esri)"
+        ]
       },
       "thumbnail_cache": {
         "rolling_back": "Откат изменений…",

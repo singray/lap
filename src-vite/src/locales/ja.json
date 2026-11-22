@@ -1214,7 +1214,6 @@
     "fields_default": "既定",
     "fields_all": "すべて表示",
     "fields_custom": "カスタム",
-
     "hide_empty_fields": "空の項目を自動的に非表示",
     "customize_fields": "表示項目の設定",
     "title": "ファイル情報",
@@ -1311,7 +1310,7 @@
     "standard": "標準",
     "satellite": "衛星",
     "gaode": "Gaode",
-"heatmap": "ヒートマップ",
+    "heatmap": "ヒートマップ",
     "photo_count": "{count} 枚の写真",
     "no_photos_in_view": "写真はありません",
     "photos_in_view": "この範囲に {count} 枚の写真",
@@ -1750,7 +1749,14 @@
         "tianditu_token_hint": "天地图のタイルに必要です",
         "tianditu_token_placeholder": "トークンを貼り付け",
         "tianditu_token_status_saved": "保存済み",
-        "tianditu_token_status_empty": "未設定"
+        "tianditu_token_status_empty": "未設定",
+        "map_tile_source": "地図タイル",
+        "map_tile_source_hint": "地図ビューのタイルを選択",
+        "map_tile_source_options": [
+          "OpenStreetMap（既定）",
+          "高德地図（中国、プロキシ不要）",
+          "衛星図（Esri）"
+        ]
       },
       "thumbnail_cache": {
         "rolling_back": "元に戻しています…",

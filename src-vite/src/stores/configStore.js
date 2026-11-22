@@ -55,7 +55,7 @@ export const useConfigStore = defineStore('configStore', {
       showBasicInfo: true,       // show basic info
       showMetadata: true,        // show metadata
       showMap: true,             // show map
-      mapTheme: 0,               // 0: gaode (default), 1: satellite, 2: osm standard
+      mapTheme: 2,               // legacy: 0: gaode, 1: satellite, 2: osm standard (migrated to settings.mapTileSource)
     },
 
     search: {
@@ -170,6 +170,7 @@ export const useConfigStore = defineStore('configStore', {
       // grid view settings
       thumbnailSize: 512,         // gallery thumbnail quality: 256, 512, or 1024
       mapProvider: 'global',      // global | tianditu
+      mapTileSource: 'osm',       // osm | gaode | satellite (global map tile theme; OSM is the default)
       tiandituToken: '',
       mapMarkerSize: 64,          // map photo marker size in px
       mapTheme: 0,                // full Map view theme (0: standard, 1: satellite); independent of infoPanel.mapTheme
@@ -356,6 +357,9 @@ export const useConfigStore = defineStore('configStore', {
     setMapProvider(mapProvider) {
       this.settings.mapProvider = mapProvider === 'tianditu' ? 'tianditu' : 'global';
     },
+    setMapTileSource(mapTileSource) {
+      this.settings.mapTileSource = ['osm', 'gaode', 'satellite'].includes(mapTileSource) ? mapTileSource : 'osm';
+    },
     setTiandituToken(tiandituToken) {
       this.settings.tiandituToken = String(tiandituToken || '').trim();
     },
@@ -459,6 +463,12 @@ export const useConfigStore = defineStore('configStore', {
           }
           settings.rawPreviewSource = ['rendered', 'brightened'].includes(settings.rawPreviewSource) ? settings.rawPreviewSource : 'embedded';
           settings.rawPairDisplaySource = settings.rawPairDisplaySource === 'raw' ? 'raw' : 'jpeg';
+          // Migrate the old infoPanel.mapTheme (0=gaode, 1=satellite, 2=osm)
+          // into the explicit settings.mapTileSource. New installs use OSM.
+          if (!['osm', 'gaode', 'satellite'].includes(settings.mapTileSource)) {
+            const legacyTheme = state?.infoPanel?.mapTheme;
+            settings.mapTileSource = legacyTheme === 0 ? 'gaode' : legacyTheme === 1 ? 'satellite' : 'osm';
+          }
           delete settings.rawPairClipboardMode;
           if (settings.fileDeleteBehavior !== 'trash' && settings.fileDeleteBehavior !== 'permanent') {
             settings.fileDeleteBehavior = settings.deletePermanently === true ? 'permanent' : 'trash';

@@ -1214,7 +1214,6 @@
     "fields_default": "Типові",
     "fields_all": "Показати всі",
     "fields_custom": "Власні",
-
     "hide_empty_fields": "Автоматично приховувати порожні поля",
     "customize_fields": "Налаштувати поля",
     "title": "Відомості",
@@ -1749,7 +1748,14 @@
         "tianditu_token_hint": "Потрібен для тайлів мапи Tianditu",
         "tianditu_token_placeholder": "Вставте свій ключ",
         "tianditu_token_status_saved": "Збережено",
-        "tianditu_token_status_empty": "Не налаштовано"
+        "tianditu_token_status_empty": "Не налаштовано",
+        "map_tile_source": "Стиль карти",
+        "map_tile_source_hint": "Виберіть плитки для вигляду карти",
+        "map_tile_source_options": [
+          "OpenStreetMap (за замовчуванням)",
+          "Gaode (Китай, без проксі)",
+          "Супутник (Esri)"
+        ]
       },
       "thumbnail_cache": {
         "rolling_back": "Відкат змін…",

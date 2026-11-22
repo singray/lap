@@ -603,6 +603,15 @@
                 <option v-for="option in mapProviderOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
               </select>
             </div>
+            <div class="flex items-center justify-between gap-4 px-1 rounded-box hover:bg-base-100/10 transition-colors duration-200">
+              <div class="min-w-0 flex flex-col gap-0.5 text-sm leading-5">
+                <div>{{ $t('settings.advanced.map.map_tile_source') }}</div>
+                <div class="text-xs text-base-content/30">{{ $t('settings.advanced.map.map_tile_source_hint') }}</div>
+              </div>
+              <select class="select select-bordered select-sm min-w-40 shrink-0" v-model="config.settings.mapTileSource">
+                <option v-for="option in mapTileSourceOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+              </select>
+            </div>
             <div v-if="config.settings.mapProvider === 'tianditu'" class="flex items-center justify-between gap-4 px-1 rounded-box hover:bg-base-100/10 transition-colors duration-200">
               <div class="min-w-0 flex flex-col gap-0.5 text-sm leading-5">
                 <div>{{ $t('settings.advanced.map.tianditu_token') }}</div>
@@ -1054,6 +1063,19 @@ const mapProviderOptions = computed(() => {
   return [
     { value: 'global', label: labels[0] },
     { value: 'tianditu', label: labels[1] },
+  ];
+});
+
+const mapTileSourceOptions = computed(() => {
+  const labels = localeMsg.value.settings.advanced.map.map_tile_source_options || [
+    'OpenStreetMap (default)',
+    'Gaode (China, no proxy)',
+    'Satellite (Esri)',
+  ];
+  return [
+    { value: 'osm', label: labels[0] },
+    { value: 'gaode', label: labels[1] },
+    { value: 'satellite', label: labels[2] },
   ];
 });
 

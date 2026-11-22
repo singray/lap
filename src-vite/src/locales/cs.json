@@ -1748,7 +1748,14 @@
         "tianditu_token_hint": "Vyžadováno pro mapové dlaždice Tianditu",
         "tianditu_token_placeholder": "Vložte svůj token",
         "tianditu_token_status_saved": "Uloženo",
-        "tianditu_token_status_empty": "Není nastaveno"
+        "tianditu_token_status_empty": "Není nastaveno",
+        "map_tile_source": "Styl mapy",
+        "map_tile_source_hint": "Vyberte dlaždice pro zobrazení mapy",
+        "map_tile_source_options": [
+          "OpenStreetMap (výchozí)",
+          "Gaode (Čína, bez proxy)",
+          "Satelit (Esri)"
+        ]
       },
       "thumbnail_cache": {
         "rolling_back": "Vrací se zpět…",

@@ -1214,7 +1214,6 @@
     "fields_default": "Alapértelmezett",
     "fields_all": "Összes megjelenítése",
     "fields_custom": "Egyéni",
-
     "hide_empty_fields": "Üres mezők automatikus elrejtése",
     "customize_fields": "Mezők testreszabása",
     "title": "Adatok",
@@ -1749,7 +1748,14 @@
         "tianditu_token_hint": "A Tianditu térképcsempéihez szükséges",
         "tianditu_token_placeholder": "Token beillesztése",
         "tianditu_token_status_saved": "Mentve",
-        "tianditu_token_status_empty": "Nincs beállítva"
+        "tianditu_token_status_empty": "Nincs beállítva",
+        "map_tile_source": "Térképstílus",
+        "map_tile_source_hint": "Válassza ki a térképnézet csempéit",
+        "map_tile_source_options": [
+          "OpenStreetMap (alapértelmezett)",
+          "Gaode (Kína, proxy nélkül)",
+          "Műhold (Esri)"
+        ]
       },
       "thumbnail_cache": {
         "rolling_back": "Visszaállítás…",

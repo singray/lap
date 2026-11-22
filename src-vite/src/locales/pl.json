@@ -1214,7 +1214,6 @@
     "fields_default": "Domyślne",
     "fields_all": "Pokaż wszystkie",
     "fields_custom": "Niestandardowe",
-
     "hide_empty_fields": "Automatycznie ukrywaj puste pola",
     "customize_fields": "Dostosuj pola",
     "title": "Informacje",
@@ -1311,7 +1310,7 @@
     "standard": "Standardowa",
     "satellite": "Satelitarna",
     "gaode": "Gaode",
-"heatmap": "Mapa cieplna",
+    "heatmap": "Mapa cieplna",
     "photo_count": "{count} zdjęć",
     "no_photos_in_view": "Brak zdjęć",
     "photos_in_view": "{count} zdjęć w tym obszarze",
@@ -1750,7 +1749,14 @@
         "tianditu_token_hint": "Wymagany dla kafelków map Tianditu",
         "tianditu_token_placeholder": "Wklej swój token",
         "tianditu_token_status_saved": "Zapisano",
-        "tianditu_token_status_empty": "Nieskonfigurowany"
+        "tianditu_token_status_empty": "Nieskonfigurowany",
+        "map_tile_source": "Styl mapy",
+        "map_tile_source_hint": "Wybierz kafelki dla widoku mapy",
+        "map_tile_source_options": [
+          "OpenStreetMap (domyślne)",
+          "Gaode (Chiny, bez proxy)",
+          "Satelita (Esri)"
+        ]
       },
       "thumbnail_cache": {
         "rolling_back": "Wycofywanie zmian…",

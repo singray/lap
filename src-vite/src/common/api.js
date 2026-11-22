@@ -1826,14 +1826,31 @@ export async function getLocationInfo(sort = 0) {
   return null;
 }
 
+// Collapse concurrent identical requests. Switching views rapidly used to fire
+// several full-library GPS aggregates; sharing the in-flight promise avoids
+// repeating the expensive backend query (the backend also caches the result).
+const gpsMapPointsInflight = new Map();
+
+export function clearGpsMapPointsCache() {
+  gpsMapPointsInflight.clear();
+}
+
 // get GPS coordinates and representative thumbnails for the current media query
 export async function getGpsMapPoints(params) {
-  try {
-    return await invoke('get_gps_map_points', { params });
-  } catch (error) {
-    console.error('Failed to get GPS map points:', error);
+  const key = JSON.stringify(params ?? {});
+  let pending = gpsMapPointsInflight.get(key);
+  if (!pending) {
+    pending = invoke('get_gps_map_points', { params })
+      .catch((error) => {
+        console.error('Failed to get GPS map points:', error);
+        return [];
+      })
+      .finally(() => {
+        gpsMapPointsInflight.delete(key);
+      });
+    gpsMapPointsInflight.set(key, pending);
   }
-  return [];
+  return pending;
 }
 
 // settings
